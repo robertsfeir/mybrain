@@ -1,11 +1,11 @@
 ---
 name: mybrain-init
-description: Scaffold a project-local MyBrain instance. Creates .mybrain/ with compose, env, and schema files, then wires it into .mcp.json. Supports multiple named brains per project.
+description: Scaffold a project-local MyBrain instance. Creates .mybrain/ with all server files, compose, env, and schema, then wires it into .mcp.json. Supports multiple named brains per project.
 ---
 
 # MyBrain -- Init
 
-Scaffold a project-local MyBrain instance with minimal effort. Creates everything needed and wires it into `.mcp.json` so Claude Code picks it up on next session start.
+Scaffold a project-local MyBrain instance with minimal effort. Creates a fully self-contained directory with everything needed to build and run, then wires it into `.mcp.json` so Claude Code picks it up on next session start.
 
 ## Init Procedure
 
@@ -44,15 +44,22 @@ That's the only credential needed.
 
 ### Step 4: Scaffold Files
 
-Create the following structure. **Show the user what you're about to create and ask for confirmation before writing.**
+The scaffolded directory must be **fully self-contained** — everything needed to `podman compose up` without any external references. Copy all server files from the plugin's `templates/` directory.
+
+**Show the user what you're about to create and ask for confirmation before writing.**
 
 ```
 .mybrain/
   <name>/
     compose.yml       # PostgreSQL + MCP server, with assigned ports
     .env              # OpenRouter API key
-    schema.sql        # Database schema (pgvector, thoughts table, indexes)
+    schema.sql        # Database schema (copied from plugin templates/schema.sql)
+    Dockerfile        # Container build (copied from plugin templates/Dockerfile)
+    package.json      # Dependencies (copied from plugin templates/package.json)
+    server.mjs        # MCP server source (copied from plugin templates/server.mjs)
 ```
+
+**How to find the plugin source files:** The plugin's `templates/` directory is located relative to this skill file. Use the plugin installation path to locate these files and copy their contents into the scaffolded directory.
 
 **compose.yml** — use this template, replacing `<name>`, `<mcp-port>`, and `<pg-port>`:
 
@@ -77,9 +84,7 @@ services:
       retries: 5
 
   mcp:
-    image: localhost/mybrain_mcp:latest
-    build:
-      context: ../../templates
+    build: .
     container_name: mybrain_<name>_mcp
     environment:
       MCP_TRANSPORT: http
@@ -101,13 +106,13 @@ volumes:
   mybrain_<name>_data:
 ```
 
+Note: `build: .` points to the scaffolded directory itself, which contains the Dockerfile, server.mjs, and package.json.
+
 **.env** — just the API key:
 
 ```env
 OPENROUTER_API_KEY=<user's key>
 ```
-
-**schema.sql** — copy from the plugin's `templates/schema.sql`.
 
 Also add `.mybrain/*/.env` to the project's `.gitignore` if not already there.
 
@@ -178,7 +183,7 @@ If multiple brains exist, list them all with their ports and status.
 ## Important Notes
 
 - **Always confirm before writing files or modifying `.mcp.json`.** This is a guided process.
+- **The scaffolded directory must be self-contained.** All files needed to build and run must be inside `.mybrain/<name>/`. Do not reference paths outside the scaffolded directory.
 - **`.env` files must not be committed.** Ensure `.gitignore` covers `.mybrain/*/.env`.
 - **Port conflicts:** If the assigned port is in use, try the next one. Check with `podman compose ps` or `lsof -i :<port>`.
-- **Shared image:** All brains share the same `mybrain_mcp` container image. It only needs to be built once.
 - **OpenRouter credits:** capture and search cost fractions of a cent per call. Browse and stats are free (pure SQL).
