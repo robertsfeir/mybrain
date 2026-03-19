@@ -1,0 +1,11 @@
+{
+  "name": "mybrain",
+  "version": "1.0.0",
+  "description": "Personal knowledge base with semantic search -- local PostgreSQL + pgvector, accessible from Claude Code CLI and Claude Desktop via MCP",
+  "author": { "name": "Robert Sfeir" },
+  "keywords": ["knowledge-base", "memory", "semantic-search", "mcp", "pgvector", "postgresql"],
+  "skills": [
+    "./skills/mybrain-setup",
+    "./skills/mybrain-overview"
+  ]
+}

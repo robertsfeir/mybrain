@@ -1,0 +1,19 @@
+{
+  "name": "mybrain",
+  "version": "1.0.0",
+  "description": "Personal knowledge base MCP server with semantic search",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs",
+    "start:http": "node server.mjs http"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "pg": "^8.20.0",
+    "pgvector": "^0.2.1"
+  }
+}
