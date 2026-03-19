@@ -15,7 +15,7 @@ Before starting, verify these are installed. If any are missing, give the user t
 |------------|--------------|-----------------|
 | Node.js (v18+) | `node --version` | `brew install node` (macOS) or https://nodejs.org |
 | PostgreSQL | `psql --version` | `brew install postgresql@17` (macOS) |
-| pgvector | `psql -c "SELECT 1" 2>/dev/null` | `brew install pgvector` (macOS) |
+| pgvector | `ls $(pg_config --sharedir)/extension/vector.control 2>/dev/null` | `brew install pgvector` (macOS) |
 
 PostgreSQL must be running: `brew services start postgresql@17`
 
