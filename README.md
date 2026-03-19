@@ -62,4 +62,4 @@ templates/
 
 ## License
 
-ISC
+MIT
