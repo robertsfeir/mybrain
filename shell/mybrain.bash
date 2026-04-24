@@ -5,7 +5,7 @@
 #   [ -f ~/.claude/mybrain/shell/mybrain.bash ] && source ~/.claude/mybrain/shell/mybrain.bash
 #
 # All tunables can be overridden before sourcing:
-#   export MYBRAIN_HEALTH_TIMEOUT=60
+#   MYBRAIN_HEALTH_TIMEOUT=60
 #   source ~/.claude/mybrain/shell/mybrain.bash
 
 # ─── Tunables ─────────────────────────────────────────────────────────────────
@@ -31,8 +31,12 @@ claude() {
     _mybrain_log "not healthy — starting/restarting container via $MYBRAIN_COMPOSE_FILE"
     docker compose -f "$MYBRAIN_COMPOSE_FILE" up -d >&2
 
+    # Ctrl+C during the wait: print newline and start Claude anyway (same as timeout)
+    local _mybrain_interrupted=0
+    trap '{ echo "" >&2; _mybrain_log "interrupted — starting Claude Code anyway (brain may be unavailable)"; _mybrain_interrupted=1; }' INT
+
     local elapsed=0
-    while (( elapsed < MYBRAIN_HEALTH_TIMEOUT )); do
+    while (( elapsed < MYBRAIN_HEALTH_TIMEOUT && _mybrain_interrupted == 0 )); do
       if _mybrain_healthy; then
         [[ $elapsed -gt 0 ]] && echo "" >&2
         _mybrain_log "healthy after ${elapsed}s — starting Claude Code"
@@ -43,7 +47,9 @@ claude() {
       (( elapsed += MYBRAIN_HEALTH_INTERVAL ))
     done
 
-    if (( elapsed >= MYBRAIN_HEALTH_TIMEOUT )); then
+    trap - INT  # restore default SIGINT handling
+
+    if (( _mybrain_interrupted == 0 && elapsed >= MYBRAIN_HEALTH_TIMEOUT )); then
       echo "" >&2
       _mybrain_log "timed out after ${MYBRAIN_HEALTH_TIMEOUT}s — starting Claude Code anyway (brain may be unavailable)"
     fi

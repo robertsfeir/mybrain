@@ -42,7 +42,9 @@ fi
 _log "not healthy — starting/restarting container via $MYBRAIN_COMPOSE_FILE"
 docker compose -f "$MYBRAIN_COMPOSE_FILE" up -d >&2
 
-# ─── Wait for health ──────────────────────────────────────────────────────────
+# ─── Wait for health (Ctrl+C starts Claude anyway, same as timeout) ──────────
+trap '{ printf "\n" >&2; _log "interrupted — starting Claude Code anyway (brain may be unavailable)"; exit 0; }' INT
+
 elapsed=0
 while [ "$elapsed" -lt "$MYBRAIN_HEALTH_TIMEOUT" ]; do
   if _healthy; then
