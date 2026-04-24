@@ -307,24 +307,29 @@ shell function claude() runs
     │
     ├─ curl http://localhost:8787/health (2s timeout)
     │
-    ├─ HEALTHY ──────────────────────────────────▶ command claude "$@"
-    │                                               (brain available)
+    ├─ HEALTHY ──────────────────────────────────────────────▶ command claude "$@"
+    │   ● mybrain: healthy — starting Claude Code
     │
-    ├─ DOCKER NOT RUNNING ───────────────────────▶ command claude "$@"
-    │   (logs warning)                              (brain unavailable,
-    │                                                Claude still starts)
+    ├─ DOCKER NOT RUNNING ───────────────────────────────────▶ command claude "$@"
+    │   ● mybrain: docker daemon not reachable …               (brain unavailable,
+    │                                                           Claude still starts)
     │
     └─ NOT HEALTHY
            │
-           ├─ docker compose -f ~/.claude/mybrain/compose.yml up -d
+           ├─ ● mybrain: not healthy — starting container via …
+           ├─ docker compose … up -d
            │
-           ├─ poll /health every 2s ──── healthy ──▶ command claude "$@"
+           ├─ ✻ Waiting for mybrain… (14s / 120s · Ctrl+C to skip)
+           │         ↕ polls /health every MYBRAIN_HEALTH_INTERVAL seconds
            │
-           ├─ Ctrl+C ────────────────────────────▶ command claude "$@"
-           │   (logs "interrupted")                 (brain may be unavailable)
+           ├─ healthy ──────────────────────────────────────▶ command claude "$@"
+           │   ● mybrain: ready after 14s — starting Claude Code
            │
-           └─ timeout (120s) ────────────────────▶ command claude "$@"
-               (logs "timed out")                   (brain may be unavailable)
+           ├─ Ctrl+C ───────────────────────────────────────▶ command claude "$@"
+           │   ● mybrain: interrupted …                        (brain may be unavailable)
+           │
+           └─ timeout ──────────────────────────────────────▶ command claude "$@"
+               ● mybrain: timed out after 120s …               (brain may be unavailable)
 ```
 
 The key detail: `command claude "$@"` at the end bypasses the wrapper function and calls the real `claude` binary with your original arguments unchanged. You never need to think about it — you still just type `claude`.

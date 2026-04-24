@@ -4,8 +4,10 @@
 # Add to your ~/.bashrc:
 #   [ -f ~/.claude/mybrain/shell/mybrain.bash ] && source ~/.claude/mybrain/shell/mybrain.bash
 #
-# All tunables can be overridden before sourcing:
-#   MYBRAIN_HEALTH_TIMEOUT=60
+# Tunables — set these before the source line to override defaults:
+#   MYBRAIN_HEALTH_TIMEOUT=60   # max seconds to wait for container
+#   MYBRAIN_QUIET=1             # suppress all mybrain output
+#   NO_COLOR=1                  # disable ANSI colors and spinner animation
 #   source ~/.claude/mybrain/shell/mybrain.bash
 
 # ─── Tunables ─────────────────────────────────────────────────────────────────
@@ -19,9 +21,11 @@
 _mybrain_spin_frames=('✻' '✽' '✢' '✳' '✺' '✹' '✶' '✴')
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
-_mybrain_log()     { [[ "$MYBRAIN_QUIET" != "1" ]] && echo "mybrain: $*" >&2; }
 _mybrain_healthy() { curl -fsS --max-time 2 "$MYBRAIN_HEALTH_URL" >/dev/null 2>&1; }
 
+# _mybrain_status <ansi-color-code> <message>
+# Prints "● mybrain: <message>" with a colored dot when stderr is a TTY.
+# Callers: 32 = green (success/ready), 33 = yellow (warning/fallback), 36 = cyan (in-progress).
 _mybrain_status() {
   [[ "$MYBRAIN_QUIET" == "1" ]] && return
   if [[ -t 2 && -z "${NO_COLOR:-}" ]]; then
@@ -42,7 +46,7 @@ claude() {
   elif ! docker info &>/dev/null; then
     _mybrain_status 33 "docker daemon not reachable — starting Claude Code without brain"
   else
-    _mybrain_log "not healthy — starting/restarting container via $MYBRAIN_COMPOSE_FILE"
+    _mybrain_status 36 "not healthy — starting container via $MYBRAIN_COMPOSE_FILE"
     docker compose -f "$MYBRAIN_COMPOSE_FILE" up -d >&2
 
     local _mybrain_interrupted=0
@@ -70,7 +74,7 @@ claude() {
       (( elapsed += MYBRAIN_HEALTH_INTERVAL ))
     done
 
-    trap - INT
+    trap - INT  # restore default SIGINT handling
 
     if (( _mybrain_interrupted == 0 && elapsed >= MYBRAIN_HEALTH_TIMEOUT )); then
       printf "\r\033[K" >&2

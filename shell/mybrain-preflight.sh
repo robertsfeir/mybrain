@@ -1,12 +1,14 @@
 #!/usr/bin/env sh
 # mybrain preflight health check — POSIX sh
-# Sources of truth: all shell wrappers delegate the check/wait logic here.
+# Used by the csh/tcsh wrappers (which cannot define shell functions) and as
+# a portable reference implementation. zsh and bash have equivalent logic
+# inline in their own wrapper files.
 #
 # Usage: mybrain-preflight.sh [--quiet]
-# Exit 0 = container healthy (or docker unavailable, proceed anyway)
-# Exit 1 = timed out waiting for health
+# Always exits 0 — Claude Code always starts; brain may be unavailable on
+# timeout or when Docker is not running.
 
-# ─── Tunables (override in your rc before sourcing the wrapper) ───────────────
+# ─── Tunables (override in your rc before invoking) ───────────────────────────
 MYBRAIN_HEALTH_URL="${MYBRAIN_HEALTH_URL:-http://localhost:8787/health}"
 MYBRAIN_COMPOSE_FILE="${MYBRAIN_COMPOSE_FILE:-$HOME/.claude/mybrain/compose.yml}"
 MYBRAIN_HEALTH_TIMEOUT="${MYBRAIN_HEALTH_TIMEOUT:-120}"
@@ -17,16 +19,15 @@ QUIET=0
 [ "$1" = "--quiet" ] && QUIET=1
 [ "$MYBRAIN_QUIET" = "1" ] && QUIET=1
 
+# Color/animation: enabled when stderr is a TTY and NO_COLOR is unset.
 USE_COLOR=0
 if [ -t 2 ] && [ -z "${NO_COLOR:-}" ]; then
   USE_COLOR=1
 fi
 
-_log() {
-  [ "$QUIET" = "0" ] && printf "mybrain: %s\n" "$*" >&2
-}
-
 # _status <ansi-color-code> <message>
+# Prints "● mybrain: <message>" with a colored dot when USE_COLOR=1.
+# Callers: 32 = green (success/ready), 33 = yellow (warning/fallback), 36 = cyan (in-progress).
 _status() {
   [ "$QUIET" = "1" ] && return 0
   if [ "$USE_COLOR" = "1" ]; then
@@ -53,7 +54,7 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 # ─── Start / restart the container ────────────────────────────────────────────
-_log "not healthy — starting/restarting container via $MYBRAIN_COMPOSE_FILE"
+_status 36 "not healthy — starting container via $MYBRAIN_COMPOSE_FILE"
 docker compose -f "$MYBRAIN_COMPOSE_FILE" up -d >&2
 
 # ─── Wait for health (Ctrl+C starts Claude anyway, same as timeout) ──────────
