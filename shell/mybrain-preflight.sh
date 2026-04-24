@@ -52,7 +52,7 @@ while [ "$elapsed" -lt "$MYBRAIN_HEALTH_TIMEOUT" ]; do
     _log "healthy after ${elapsed}s — starting Claude Code"
     exit 0
   fi
-  printf "\rmybrain: waiting for health... %ds / %ds" "$elapsed" "$MYBRAIN_HEALTH_TIMEOUT" >&2
+  printf "\rmybrain: waiting for health... %ds / %ds (Ctrl+C to skip)" "$elapsed" "$MYBRAIN_HEALTH_TIMEOUT" >&2
   sleep "$MYBRAIN_HEALTH_INTERVAL"
   elapsed=$((elapsed + MYBRAIN_HEALTH_INTERVAL))
 done
