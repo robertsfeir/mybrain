@@ -185,7 +185,7 @@ function startEmbedWorker() {
 
 if (ASYNC_STORAGE) startEmbedWorker();
 
-const mode = process.argv[2] || "stdio";
+const mode = process.env.MCP_TRANSPORT || process.argv[2] || "stdio";
 
 if (mode === "http") {
   const PORT = process.env.PORT || 8787;
@@ -220,6 +220,12 @@ if (mode === "http") {
       if (req.method === "OPTIONS") {
         res.writeHead(204);
         res.end();
+        return;
+      }
+
+      if (req.method === "GET" && req.url === "/health") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "ok" }));
         return;
       }
 
