@@ -91,9 +91,19 @@ volumes:
 MYBRAIN_NAME=<name>
 MYBRAIN_PORT=<port>
 BRAIN_SCOPE=personal
+MYBRAIN_ASYNC_STORAGE=<true|false>   # see B4 below
 ```
 
-### B4: Build and Start
+### B4: Async Memory Storage (ask)
+
+Before building, ask: **"Enable async memory storage? `capture_thought` returns instantly (~3ms) and embeddings run in the background. Trade-off: a thought becomes searchable ~1s after capture. Recommended for Bundled mode since local Ollama is slower than cloud embeddings. (yes / no, default: yes)"**
+
+- **Yes (default):** set `MYBRAIN_ASYNC_STORAGE=true` in `.env`.
+- **No:** set `MYBRAIN_ASYNC_STORAGE=false` in `.env`.
+
+Either way, write the chosen value to `.env` before starting the container.
+
+### B5: Build and Start
 
 ```bash
 cd .mybrain/<name> && docker compose up -d --build
@@ -103,7 +113,7 @@ The first build downloads the Ollama binary and installs Node.js into the image 
 
 Wait for: `mybrain is ready — MCP HTTP at http://localhost:<port>`
 
-### B5: Register MCP Server
+### B6: Register MCP Server
 
 Register as a **user-scoped** MCP server (available in all projects):
 
@@ -118,11 +128,11 @@ Or project-scoped (only the current project):
 claude mcp add mybrain --transport http --url "http://localhost:<port>"
 ```
 
-### B6: Verify
+### B7: Verify
 
 Restart Claude Code. Test: "How many thoughts do I have?" — should call `brain_stats`.
 
-### B7: Optional — Install Hooks
+### B8: Optional — Install Hooks
 
 After setup, offer these two optional steps. Both are independently skippable — if the user says no or skip to either, move on without error.
 
@@ -194,7 +204,7 @@ Ask: **"Do you want to use OpenRouter (cloud) or Ollama (local) for embeddings?"
 - **OpenRouter** (default): requires an API key, costs ~$0.0001/call, no local GPU needed
 - **Ollama**: free, runs locally, requires Ollama installed on the host or activated via compose profile
 
-If Ollama: enable the `ollama` compose profile in D5 (`docker compose --profile ollama up -d`).
+If Ollama: enable the `ollama` compose profile in D8 (`docker compose --profile ollama up -d`).
 
 ### D3: Get API Key (OpenRouter only)
 
@@ -301,9 +311,19 @@ volumes:
 EMBEDDING_PROVIDER=openrouter
 OPENROUTER_API_KEY=<user's key>
 # BRAIN_SCOPE=personal
+MYBRAIN_ASYNC_STORAGE=<true|false>   # see D7 below
 ```
 
-### D7: Start and Verify
+### D7: Async Memory Storage (ask)
+
+Ask: **"Enable async memory storage? `capture_thought` returns instantly (~3ms) and embeddings run in the background. Trade-off: a thought becomes searchable ~1s after capture. Recommended if you chose Ollama in D2 (local embeddings are slower); optional for OpenRouter. (yes / no, default: no for OpenRouter, yes for Ollama)"**
+
+- **Yes:** set `MYBRAIN_ASYNC_STORAGE=true` in `.env`.
+- **No:** set `MYBRAIN_ASYNC_STORAGE=false` in `.env`.
+
+Default to `yes` if the user chose Ollama in D2, `no` if OpenRouter.
+
+### D8: Start and Verify
 
 ```bash
 # OpenRouter (default)
@@ -342,17 +362,24 @@ Ask the user for:
 postgresql://<user>:<password>@<host>:5432/<database>?ssl=true&sslmode=no-verify
 ```
 
-### R3: Register MCP Server
+### R3: Async Memory Storage (ask)
+
+Ask: **"Enable async memory storage? `capture_thought` returns instantly and embeddings run in the background. Trade-off: a thought becomes searchable ~1s after capture. In RDS/stdio mode the worker only runs while Claude Code is open — thoughts captured right before you close Claude may embed on the next launch instead. (yes / no, default: no)"**
+
+If yes, add `-e MYBRAIN_ASYNC_STORAGE=true` to the `claude mcp add` command in R4.
+
+### R4: Register MCP Server
 
 ```bash
 claude mcp add mybrain --transport stdio \
   -e DATABASE_URL="<constructed URL>" \
   -e OPENROUTER_API_KEY="<key>" \
   -e BRAIN_SCOPE="<scope>" \
+  -e MYBRAIN_ASYNC_STORAGE="<true|false>" \
   -- node <path-to-plugin>/server.mjs
 ```
 
-### R4: Verify Schema
+### R5: Verify Schema
 
 If the database is fresh, apply the schema:
 
@@ -360,7 +387,7 @@ If the database is fresh, apply the schema:
 psql "<DATABASE_URL>" -f templates/schema.sql
 ```
 
-### R5: Test
+### R6: Test
 
 Restart Claude Code. Test: "How many thoughts do I have?"
 
@@ -393,6 +420,8 @@ Scope:     <scope>
 MCP:       stdio
 {{/if}}
 
+Async memory storage: {{enabled | disabled}}
+
 Tools:
   capture_thought   — Save a thought
   search_thoughts   — Semantic search
@@ -412,3 +441,4 @@ Try: "Remember this: I just set up MyBrain"
 - **Bundled mode — first boot takes ~2-5 min** on a fast connection (image build + mxbai-embed-large model pull ~700 MB). Subsequent starts are under 10s.
 - **ltree scoping** — when `BRAIN_SCOPE` is set, all queries filter by `scope @> ARRAY['<scope>']::ltree[]`. Multiple users/projects can share one database without leaking thoughts.
 - **Never write to the user's shell rc files** (`~/.zshrc`, `~/.bashrc`, etc.). Print the line and let the user add it.
+- **Async memory storage (`MYBRAIN_ASYNC_STORAGE=true`)** — `capture_thought` inserts with `embedding=NULL` and returns in ~3ms; a background worker in the same Node process polls NULL-embedding rows every 500ms and fills them in. The `thoughts` table itself is the queue, so nothing is lost on crash. Trade-off: thoughts are not retrievable via `search_thoughts` until the embedding is generated (typically <1s). Recommended with local Ollama where the embedding call is the slow path.

@@ -4,6 +4,7 @@ set -e
 PGDATA="${PGDATA:-/var/lib/postgresql/data}"
 MYBRAIN_PORT="${MYBRAIN_PORT:-8787}"
 BRAIN_SCOPE="${BRAIN_SCOPE:-personal}"
+MYBRAIN_ASYNC_STORAGE="${MYBRAIN_ASYNC_STORAGE:-false}"
 
 log() { echo "[mybrain] $*"; }
 
@@ -66,6 +67,7 @@ DATABASE_URL="postgresql://mybrain:mybrain@127.0.0.1:5432/mybrain" \
 EMBEDDING_PROVIDER=ollama \
 OLLAMA_HOST=http://127.0.0.1:11434 \
 BRAIN_SCOPE="$BRAIN_SCOPE" \
+MYBRAIN_ASYNC_STORAGE="$MYBRAIN_ASYNC_STORAGE" \
   node /app/server.mjs &
 MCP=$!
 

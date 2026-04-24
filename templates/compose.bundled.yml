@@ -14,6 +14,7 @@ services:
     environment:
       MYBRAIN_PORT: "${MYBRAIN_PORT:-8787}"
       BRAIN_SCOPE: "${BRAIN_SCOPE:-personal}"
+      MYBRAIN_ASYNC_STORAGE: "${MYBRAIN_ASYNC_STORAGE:-false}"
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8787/health || exit 1"]
       interval: 10s

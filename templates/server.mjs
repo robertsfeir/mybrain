@@ -12,6 +12,7 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OLLAMA_HOST = process.env.OLLAMA_HOST || "http://localhost:11434";
 const EMBEDDING_PROVIDER = process.env.EMBEDDING_PROVIDER || "openrouter"; // "openrouter" | "ollama"
 const BRAIN_SCOPE = process.env.BRAIN_SCOPE;
+const ASYNC_STORAGE = process.env.MYBRAIN_ASYNC_STORAGE === "true";
 
 const pool = new pg.Pool({ connectionString: DATABASE_URL });
 
@@ -49,6 +50,15 @@ function registerTools(srv) {
     },
     async ({ content, metadata = {} }) => {
       const scopeArray = BRAIN_SCOPE ? [BRAIN_SCOPE] : ["default"];
+      if (ASYNC_STORAGE) {
+        const result = await pool.query(
+          `INSERT INTO thoughts (content, embedding, metadata, scope, thought_type, source_agent, source_phase, importance)
+           VALUES ($1, NULL, $2, $3::ltree[], 'insight', 'robert', 'build', 0.5)
+           RETURNING id`,
+          [content, JSON.stringify(metadata), `{${scopeArray.join(",")}}`]
+        );
+        return { content: [{ type: "text", text: `Thought queued (id: ${result.rows[0].id})` }] };
+      }
       const embedding = await getEmbedding(content);
       const result = await pool.query(
         `INSERT INTO thoughts (content, embedding, metadata, scope, thought_type, source_agent, source_phase, importance)
@@ -134,6 +144,46 @@ function registerTools(srv) {
     }
   );
 }
+
+function startEmbedWorker() {
+  const POLL_MS = Number(process.env.MYBRAIN_WORKER_POLL_MS || 500);
+  const BATCH = Number(process.env.MYBRAIN_WORKER_BATCH || 8);
+  let running = false;
+
+  async function tick() {
+    if (running) return;
+    running = true;
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, content FROM thoughts
+         WHERE embedding IS NULL
+         ORDER BY created_at
+         LIMIT $1`,
+        [BATCH]
+      );
+      for (const r of rows) {
+        try {
+          const vec = await getEmbedding(r.content);
+          await pool.query(
+            `UPDATE thoughts SET embedding = $1 WHERE id = $2 AND embedding IS NULL`,
+            [pgvector.toSql(vec), r.id]
+          );
+        } catch (err) {
+          console.error(`embed worker: row ${r.id} failed:`, err.message);
+        }
+      }
+    } catch (err) {
+      console.error("embed worker tick error:", err.message);
+    } finally {
+      running = false;
+    }
+  }
+
+  setInterval(tick, POLL_MS);
+  console.error(`embed worker started (poll ${POLL_MS}ms, batch ${BATCH})`);
+}
+
+if (ASYNC_STORAGE) startEmbedWorker();
 
 const mode = process.env.MCP_TRANSPORT || process.argv[2] || "stdio";
 

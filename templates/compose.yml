@@ -43,6 +43,7 @@ services:
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-openrouter}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
+      MYBRAIN_ASYNC_STORAGE: ${MYBRAIN_ASYNC_STORAGE:-false}
     ports:
       - "8787:8787"
     depends_on:

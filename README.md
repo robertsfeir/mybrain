@@ -163,6 +163,16 @@ Results come back sorted by combined score, so recent *and* important *and* rele
 
 Every thought carries an `ltree[]` scope (e.g. `personal`, `work.acme.app`). When `BRAIN_SCOPE` is set, every query is filtered to that scope -- multiple users or projects can share one database without leaking thoughts to each other.
 
+### Async memory storage (optional)
+
+Set `MYBRAIN_ASYNC_STORAGE=true` to make `capture_thought` return the moment the row hits the database (~3 ms on local PostgreSQL) instead of waiting for the embedding call (100–1000 ms, especially with local Ollama). A background worker inside the same Node process polls for rows with `embedding IS NULL` every 500 ms and fills them in.
+
+The `thoughts` table itself is the queue — no extra services, no message bus. If the container crashes mid-embed, the un-embedded rows stay in the table and get picked up on next boot. Nothing is lost.
+
+Trade-off: a just-captured thought isn't retrievable via `search_thoughts` until the embedding has been generated (typically within a second). For chatty sessions where Claude captures many thoughts in a row, this turns capture from a 100–1000 ms blocker into a ~3 ms non-event.
+
+The `/mybrain-setup` wizard asks about this in each path (Bundled / Docker / RDS) — default is **on** for Bundled (local Ollama is the slow path) and **off** for Docker/RDS with OpenRouter (cloud embeddings are fast enough that the sync path is fine).
+
 ---
 
 ## Requirements

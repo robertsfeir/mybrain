@@ -203,7 +203,8 @@ BEGIN
     )::FLOAT AS combined_score
   FROM thoughts t
   WHERE
-    (1 - (t.embedding <=> query_embedding)) >= similarity_threshold
+    t.embedding IS NOT NULL
+    AND (1 - (t.embedding <=> query_embedding)) >= similarity_threshold
     AND (include_invalidated OR t.status = 'active')
     AND (metadata_filter = '{}' OR t.metadata @> metadata_filter)
     AND (scope_filter IS NULL OR t.scope @> ARRAY[scope_filter])
