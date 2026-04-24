@@ -124,13 +124,14 @@ Restart Claude Code. Test: "How many thoughts do I have?" — should call `brain
 
 ### B7: Optional — Install Hooks
 
-After setup, offer two optional install steps:
+After setup, offer these two optional steps. Both are independently skippable — if the user says no or skip to either, move on without error.
 
 #### A) Append MyBrain protocol to global CLAUDE.md
 
-Ask: **"Append the MyBrain brain protocol to ~/.claude/CLAUDE.md? This tells Claude to use your brain automatically in every session. (y/n)"**
+Ask: **"Would you like to append the MyBrain brain protocol to ~/.claude/CLAUDE.md so Claude uses your brain automatically in every session? (yes / skip)"**
 
-If yes: read `~/.claude/CLAUDE.md` (create if missing), remove any existing `<!-- mybrain:begin -->…<!-- mybrain:end -->` block, then append:
+- **Skip (default):** do nothing. The user can re-run `/mybrain-setup` at any time to add it later.
+- **Yes:** read `~/.claude/CLAUDE.md` (create if missing), remove any existing `<!-- mybrain:begin -->…<!-- mybrain:end -->` block, then append:
 
 ```markdown
 
@@ -147,31 +148,32 @@ This block is idempotent — re-running setup replaces it cleanly.
 
 #### B) Install shell wrappers
 
-Ask: **"Install shell wrappers so the mybrain container auto-starts when you run `claude`? (y/n)"**
+Ask: **"Would you like to install shell wrappers so the mybrain container auto-starts whenever you run `claude`? (yes / skip)"**
 
-If yes:
-1. Create `~/.claude/mybrain/shell/`
-2. Copy `shell/mybrain.{zsh,bash,fish,csh,tcsh}` and `shell/mybrain-preflight.sh` there
-3. Copy `.mybrain/<name>/compose.yml` to `~/.claude/mybrain/compose.yml` (so the wrapper can start the container)
-4. **Print** (do NOT execute) the line the user must add to their own rc file:
+- **Skip (default):** do nothing. Files are available in the plugin's `shell/` directory whenever the user wants them.
+- **Yes:**
+  1. Create `~/.claude/mybrain/shell/`
+  2. Copy `shell/mybrain.{zsh,bash,fish,csh,tcsh}` and `shell/mybrain-preflight.sh` there
+  3. Copy `.mybrain/<name>/compose.yml` to `~/.claude/mybrain/compose.yml` (so the wrapper can find the compose file without pointing back into the plugin cache)
+  4. **Print** (do NOT execute) the line the user must add to their own shell rc file:
 
 ```
-# ─── MyBrain preflight ───────────────────────────────────────────
-# Add to ~/.zshrc (or ~/.bashrc / ~/.config/fish/config.fish etc.):
+# ─── MyBrain preflight ───────────────────────────────────────────────────────
+# Add this to your shell rc file (~/.zshrc, ~/.bashrc, ~/.config/fish/config.fish, etc.):
 [ -f ~/.claude/mybrain/shell/mybrain.zsh ] && source ~/.claude/mybrain/shell/mybrain.zsh
 ```
 
-**Never write to `~/.zshrc` or any shell rc file.** The user adds this line themselves.
+**Never write to `~/.zshrc` or any shell rc file.** Print the line; the user adds it themselves.
 
-The wrapper:
-- Checks `http://localhost:<port>/health` on every `claude` invocation
-- If healthy: starts Claude Code immediately (sub-100ms overhead)
-- If not healthy: runs `docker compose up -d`, polls `/health` up to `$MYBRAIN_HEALTH_TIMEOUT` seconds (default 120), then starts Claude Code
+The wrapper behavior once sourced:
+- **Already healthy:** one log line, Claude Code starts immediately (sub-100ms overhead)
+- **Not healthy:** starts/restarts container via `docker compose up -d`, polls `/health` up to `$MYBRAIN_HEALTH_TIMEOUT` seconds (default 120), then starts Claude Code
+- **Docker not running:** logs a warning and starts Claude Code anyway — brain unavailable but nothing blocks
 
-Tunables (set in the rc before sourcing):
+Tunables the user can set in their rc before the `source` line:
 ```sh
-export MYBRAIN_HEALTH_TIMEOUT=60    # seconds (default: 120)
-export MYBRAIN_QUIET=1              # suppress output (default: 0)
+export MYBRAIN_HEALTH_TIMEOUT=60    # seconds to wait (default: 120)
+export MYBRAIN_QUIET=1              # suppress all mybrain output (default: 0)
 ```
 
 ---
