@@ -1,0 +1,32 @@
+FROM pgvector/pgvector:pg17 AS base
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# tini (PID 1), curl (health probes + Ollama install), Node.js 22
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tini \
+    curl \
+    ca-certificates \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Ollama binary — copied from the official image (same architecture, no install.sh needed)
+COPY --from=ollama/ollama:latest /usr/bin/ollama /usr/bin/ollama
+
+# App
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --omit=dev
+COPY server.mjs schema.sql ./
+COPY templates/start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
+# Only the MCP HTTP port is exposed — Ollama and PG are container-internal
+EXPOSE 8787
+
+# start_period covers first-boot model pull (~2 min on fast connection)
+HEALTHCHECK --interval=10s --timeout=5s --start-period=300s --retries=12 \
+    CMD curl -fsS http://127.0.0.1:8787/health || exit 1
+
+ENTRYPOINT ["tini", "--", "/app/start.sh"]
