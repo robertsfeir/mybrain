@@ -82,7 +82,7 @@ INSERT INTO brain_config DEFAULT VALUES;
 CREATE TABLE thoughts (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   content TEXT NOT NULL,
-  embedding vector(1536),
+  embedding vector(1024),
   metadata JSONB DEFAULT '{}',
   thought_type thought_type NOT NULL,
   source_agent source_agent NOT NULL,
@@ -147,7 +147,7 @@ CREATE TRIGGER thoughts_updated_at
 -- Where: recency_decay = 0.995 ^ hours_since_last_access
 
 CREATE OR REPLACE FUNCTION match_thoughts_scored(
-  query_embedding vector(1536),
+  query_embedding vector(1024),
   similarity_threshold FLOAT DEFAULT 0.2,
   max_results INTEGER DEFAULT 10,
   metadata_filter JSONB DEFAULT '{}',

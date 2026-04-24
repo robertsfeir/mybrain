@@ -4,7 +4,9 @@
     "args": ["${CLAUDE_PLUGIN_ROOT}/server.mjs"],
     "env": {
       "DATABASE_URL": "${DATABASE_URL}",
+      "EMBEDDING_PROVIDER": "${EMBEDDING_PROVIDER}",
       "OPENROUTER_API_KEY": "${OPENROUTER_API_KEY}",
+      "OLLAMA_HOST": "${OLLAMA_HOST}",
       "BRAIN_SCOPE": "personal"
     }
   }

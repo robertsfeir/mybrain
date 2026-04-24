@@ -17,6 +17,22 @@ services:
       timeout: 5s
       retries: 5
 
+  ollama:
+    image: ollama/ollama
+    container_name: mybrain_ollama
+    profiles: [ollama]
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 3 && ollama pull mxbai-embed-large; wait"]
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list 2>/dev/null | grep -q mxbai-embed-large || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+
   mcp:
     build: .
     container_name: mybrain_mcp
@@ -24,7 +40,9 @@ services:
       MCP_TRANSPORT: http
       PORT: "8787"
       DATABASE_URL: postgresql://mybrain:mybrain@postgres:5432/mybrain
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-openrouter}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
     ports:
       - "8787:8787"
     depends_on:
@@ -38,3 +56,4 @@ services:
 
 volumes:
   mybrain_data:
+  ollama_data:

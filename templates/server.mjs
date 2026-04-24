@@ -9,8 +9,9 @@ import crypto from "crypto";
 
 const DATABASE_URL = process.env.DATABASE_URL || "postgresql://localhost:5432/mybrain";
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const BRAIN_SCOPE = process.env.BRAIN_SCOPE; // e.g. "personal" — filters all queries to this scope
-const EMBEDDING_MODEL = "openai/text-embedding-3-small";
+const OLLAMA_HOST = process.env.OLLAMA_HOST || "http://localhost:11434";
+const EMBEDDING_PROVIDER = process.env.EMBEDDING_PROVIDER || "openrouter"; // "openrouter" | "ollama"
+const BRAIN_SCOPE = process.env.BRAIN_SCOPE;
 
 const pool = new pg.Pool({ connectionString: DATABASE_URL });
 
@@ -19,14 +20,17 @@ pool.on("connect", async (client) => {
 });
 
 async function getEmbedding(text) {
-  const res = await fetch("https://openrouter.ai/api/v1/embeddings", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ model: EMBEDDING_MODEL, input: text }),
-  });
+  let url, headers, body;
+  if (EMBEDDING_PROVIDER === "ollama") {
+    url = `${OLLAMA_HOST}/v1/embeddings`;
+    headers = { "Content-Type": "application/json" };
+    body = { model: "mxbai-embed-large", input: text };
+  } else {
+    url = "https://openrouter.ai/api/v1/embeddings";
+    headers = { Authorization: `Bearer ${OPENROUTER_API_KEY}`, "Content-Type": "application/json" };
+    body = { model: "openai/text-embedding-3-small", input: text, dimensions: 1024 };
+  }
+  const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`Embedding API error: ${res.status} ${err}`);
