@@ -39,8 +39,6 @@ claude() {
   [[ -t 2 && -z "${NO_COLOR:-}" ]] && use_color=1
   local R=$'\e[0m' DIM=$'\e[2m' BOLD=$'\e[1m' CYAN=$'\e[36m' YEL=$'\e[33m'
 
-  _mybrain_log "checking container health at $MYBRAIN_HEALTH_URL"
-
   if _mybrain_healthy; then
     _mybrain_status 32 "healthy — starting Claude Code"
   elif ! docker info &>/dev/null; then

@@ -41,7 +41,6 @@ _healthy() {
 }
 
 # ─── Fast path: already healthy ───────────────────────────────────────────────
-_log "checking container health at $MYBRAIN_HEALTH_URL"
 if _healthy; then
   _status 32 "healthy — starting Claude Code"
   exit 0
