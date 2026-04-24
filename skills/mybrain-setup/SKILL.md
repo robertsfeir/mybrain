@@ -1,21 +1,178 @@
 ---
 name: mybrain-setup
-description: Use when users want to install or set up MyBrain -- a personal knowledge base with semantic search. Supports two modes -- Docker (local, self-contained) or RDS (shared remote database with ltree scoping). Guides through database setup, MCP server installation, and Claude Code configuration.
+description: Use when users want to install or set up MyBrain -- a personal knowledge base with semantic search. Supports three modes -- Bundled (single container, no API key needed), Docker (multi-container with OpenRouter or Ollama), or RDS (shared remote database). Guides through setup, MCP registration, and optional install hooks.
 ---
 
 # MyBrain -- Setup
 
-This skill installs MyBrain. It supports two deployment modes:
+This skill installs MyBrain. Three deployment modes are available:
 
-- **Docker** -- local PostgreSQL + pgvector in containers. Self-contained, no external dependencies.
-- **RDS** -- connect to a shared PostgreSQL database on AWS RDS. Supports ltree scoping to isolate thoughts per user/project.
+- **Bundled** -- PostgreSQL, Ollama, and the MCP server all run inside a **single container**. No API key needed. One port. One volume. Recommended for personal use.
+- **Docker** -- Multi-container: PostgreSQL + optional Ollama (compose profile) + MCP server. Uses OpenRouter or Ollama for embeddings.
+- **RDS** -- Connect to a shared PostgreSQL database on AWS RDS. Supports ltree scoping to isolate thoughts per user/project.
 
 ## Step 1: Choose Deployment Mode
 
-Ask the user: **"Do you want to run MyBrain locally with Docker, or connect to a remote PostgreSQL database (e.g. AWS RDS)?"**
+Ask the user: **"How do you want to run MyBrain?"**
 
-- If Docker: follow the **Docker Path** below
-- If RDS: follow the **RDS Path** below
+> 1. **Bundled** — single container, self-contained, no API key (recommended)
+> 2. **Docker** — multi-container, OpenRouter or Ollama for embeddings
+> 3. **RDS** — remote PostgreSQL on AWS RDS or any shared Postgres
+
+- If Bundled → follow the **Bundled Path** below
+- If Docker → follow the **Docker Path** below
+- If RDS → follow the **RDS Path** below
+
+---
+
+## Bundled Path
+
+Everything (PostgreSQL + Ollama + MCP server) runs in one container. Ollama provides embeddings locally — no API key needed. The container exposes only the MCP HTTP port. Data is persisted in named Docker volumes.
+
+### B1: Prerequisites
+
+| Dependency | Check | Install (macOS) |
+|------------|-------|-----------------|
+| Docker Desktop | `docker --version` | https://docker.com/products/docker-desktop |
+| Node.js (v18+) | `node --version` | `brew install node` (only needed if building from source) |
+
+### B2: Choose a Brain Name and Port
+
+- **Name** (default: `default`) — determines container name: `mybrain_<name>`
+- **Port** (default: `8787`) — the only host port exposed
+
+If `.mybrain/` exists, check for port conflicts in existing `compose.yml` files.
+
+### B3: Scaffold Directory
+
+**Show the user what you're about to create and ask for confirmation.**
+
+Create `.mybrain/<name>/`:
+
+```
+.mybrain/<name>/
+  compose.yml        # Single-container compose (built from Dockerfile.bundled)
+  .env               # MYBRAIN_NAME, MYBRAIN_PORT, BRAIN_SCOPE
+```
+
+**compose.yml** — copy from `templates/compose.bundled.yml`, substituting `<name>` and `<port>`:
+
+```yaml
+services:
+  mybrain:
+    build:
+      context: <path-to-plugin>
+      dockerfile: templates/Dockerfile.bundled
+    image: mybrain-bundled:latest
+    container_name: mybrain_<name>
+    restart: unless-stopped
+    ports:
+      - "<port>:8787"
+    volumes:
+      - mybrain_<name>_pgdata:/var/lib/postgresql/data
+      - mybrain_<name>_ollama_models:/root/.ollama
+    environment:
+      MYBRAIN_PORT: "8787"
+      BRAIN_SCOPE: "${BRAIN_SCOPE:-personal}"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8787/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      start_period: 300s
+      retries: 12
+
+volumes:
+  mybrain_<name>_pgdata:
+  mybrain_<name>_ollama_models:
+```
+
+**.env**:
+```env
+MYBRAIN_NAME=<name>
+MYBRAIN_PORT=<port>
+BRAIN_SCOPE=personal
+```
+
+### B4: Build and Start
+
+```bash
+cd .mybrain/<name> && docker compose up -d --build
+```
+
+The first build downloads the Ollama binary and installs Node.js into the image (~500 MB). First boot pulls the `mxbai-embed-large` model into the volume (~700 MB, one-time). Watch logs: `docker compose logs -f mybrain`.
+
+Wait for: `mybrain is ready — MCP HTTP at http://localhost:<port>`
+
+### B5: Register MCP Server
+
+Register as a **user-scoped** MCP server (available in all projects):
+
+```bash
+claude mcp add mybrain --scope user --transport http \
+  --url "http://localhost:<port>"
+```
+
+Or project-scoped (only the current project):
+
+```bash
+claude mcp add mybrain --transport http --url "http://localhost:<port>"
+```
+
+### B6: Verify
+
+Restart Claude Code. Test: "How many thoughts do I have?" — should call `brain_stats`.
+
+### B7: Optional — Install Hooks
+
+After setup, offer two optional install steps:
+
+#### A) Append MyBrain protocol to global CLAUDE.md
+
+Ask: **"Append the MyBrain brain protocol to ~/.claude/CLAUDE.md? This tells Claude to use your brain automatically in every session. (y/n)"**
+
+If yes: read `~/.claude/CLAUDE.md` (create if missing), remove any existing `<!-- mybrain:begin -->…<!-- mybrain:end -->` block, then append:
+
+```markdown
+
+<!-- mybrain:begin -->
+## MyBrain Protocol
+
+Use the mybrain MCP server in every session. Tools: `search_thoughts`, `capture_thought`, `browse_thoughts`, `brain_stats`.
+
+At session start, call `search_thoughts` with a query derived from the user's first substantive message (skip trivial greetings). Before answering questions with likely prior history, call `search_thoughts` first. Call `capture_thought` when the user expresses a decision, preference, correction, or commitment. At the end of a meaningful conversation, capture a summary thought.
+<!-- mybrain:end -->
+```
+
+This block is idempotent — re-running setup replaces it cleanly.
+
+#### B) Install shell wrappers
+
+Ask: **"Install shell wrappers so the mybrain container auto-starts when you run `claude`? (y/n)"**
+
+If yes:
+1. Create `~/.claude/mybrain/shell/`
+2. Copy `shell/mybrain.{zsh,bash,fish,csh,tcsh}` and `shell/mybrain-preflight.sh` there
+3. Copy `.mybrain/<name>/compose.yml` to `~/.claude/mybrain/compose.yml` (so the wrapper can start the container)
+4. **Print** (do NOT execute) the line the user must add to their own rc file:
+
+```
+# ─── MyBrain preflight ───────────────────────────────────────────
+# Add to ~/.zshrc (or ~/.bashrc / ~/.config/fish/config.fish etc.):
+[ -f ~/.claude/mybrain/shell/mybrain.zsh ] && source ~/.claude/mybrain/shell/mybrain.zsh
+```
+
+**Never write to `~/.zshrc` or any shell rc file.** The user adds this line themselves.
+
+The wrapper:
+- Checks `http://localhost:<port>/health` on every `claude` invocation
+- If healthy: starts Claude Code immediately (sub-100ms overhead)
+- If not healthy: runs `docker compose up -d`, polls `/health` up to `$MYBRAIN_HEALTH_TIMEOUT` seconds (default 120), then starts Claude Code
+
+Tunables (set in the rc before sourcing):
+```sh
+export MYBRAIN_HEALTH_TIMEOUT=60    # seconds (default: 120)
+export MYBRAIN_QUIET=1              # suppress output (default: 0)
+```
 
 ---
 
@@ -23,39 +180,42 @@ Ask the user: **"Do you want to run MyBrain locally with Docker, or connect to a
 
 ### D1: Prerequisites
 
-Verify these are installed. If any are missing, give the install command and wait for confirmation.
-
 | Dependency | Check | Install (macOS) |
 |------------|-------|-----------------|
 | Podman or Docker | `podman --version` or `docker --version` | `brew install podman` |
 | Node.js (v18+) | `node --version` | `brew install node` |
 
-### D2: Get OpenRouter API Key
+### D2: Choose Embedding Provider
 
-Ask the user for their **OpenRouter API key**. If they don't have one:
-- Sign up at https://openrouter.ai
-- Go to https://openrouter.ai/keys
-- Create a key and add a few dollars in credits
-- The embedding model (`text-embedding-3-small`) costs fractions of a cent per call
+Ask: **"Do you want to use OpenRouter (cloud) or Ollama (local) for embeddings?"**
 
-### D3: Choose a Brain Name
+- **OpenRouter** (default): requires an API key, costs ~$0.0001/call, no local GPU needed
+- **Ollama**: free, runs locally, requires Ollama installed on the host or activated via compose profile
 
-Ask what to name this brain instance. Default: `default`. The name determines:
+If Ollama: enable the `ollama` compose profile in D5 (`docker compose --profile ollama up -d`).
+
+### D3: Get API Key (OpenRouter only)
+
+If OpenRouter: ask for the **OpenRouter API key**. If they don't have one:
+- Sign up at https://openrouter.ai — go to https://openrouter.ai/keys
+- The embedding model (`text-embedding-3-small` at 1024 dims) costs fractions of a cent per call
+
+### D4: Choose a Brain Name
+
+Ask what to name this brain instance. Default: `default`. Determines:
 - Subdirectory: `.mybrain/<name>/`
-- MCP server name: `mybrain` (default) or `mybrain-<name>`
+- MCP server name: `mybrain` or `mybrain-<name>`
 - Container names: `mybrain_<name>_postgres`, `mybrain_<name>_mcp`
 
-If `.mybrain/` already exists, show existing brains and help pick a non-conflicting name.
+Check for conflicts in existing `.mybrain/*/compose.yml`.
 
-### D4: Assign Ports
+### D5: Assign Ports
 
 Each brain needs two ports:
 - `default`: MCP 8787, PostgreSQL 5433
 - Additional brains: increment (8788/5434, 8789/5435, ...)
 
-Check existing `.mybrain/*/compose.yml` for port conflicts.
-
-### D5: Scaffold Files
+### D6: Scaffold Files
 
 **Show the user what you're about to create and ask for confirmation.**
 
@@ -63,20 +223,20 @@ Copy all files from the plugin's `templates/` directory into `.mybrain/<name>/`:
 
 ```
 .mybrain/<name>/
-  compose.yml       # PostgreSQL + MCP server
-  .env              # OpenRouter API key + optional BRAIN_SCOPE
+  compose.yml       # PostgreSQL + optional Ollama + MCP server
+  .env              # API key + EMBEDDING_PROVIDER + optional BRAIN_SCOPE
   schema.sql        # Full schema with ltree, scored search
-  Dockerfile        # Container build
+  Dockerfile        # MCP container build
   package.json      # Dependencies
-  server.mjs        # MCP server (ltree-aware)
+  server.mjs        # MCP server (ltree-aware, dual-mode)
 ```
 
-**compose.yml** -- use this template (replace `<name>`, `<mcp-port>`, `<pg-port>`):
+**compose.yml** (replace `<name>`, `<mcp-port>`, `<pg-port>`):
 
 ```yaml
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg17
     container_name: mybrain_<name>_postgres
     environment:
       POSTGRES_DB: mybrain
@@ -93,6 +253,20 @@ services:
       timeout: 5s
       retries: 5
 
+  ollama:
+    image: ollama/ollama
+    container_name: mybrain_<name>_ollama
+    profiles: [ollama]
+    volumes:
+      - mybrain_<name>_ollama:/root/.ollama
+    entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 3 && ollama pull mxbai-embed-large; wait"]
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list 2>/dev/null | grep -q mxbai-embed-large || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+
   mcp:
     build: .
     container_name: mybrain_<name>_mcp
@@ -100,7 +274,9 @@ services:
       MCP_TRANSPORT: http
       PORT: "8787"
       DATABASE_URL: postgresql://mybrain:mybrain@postgres:5432/mybrain
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-openrouter}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
       BRAIN_SCOPE: ${BRAIN_SCOPE:-}
     ports:
       - "<mcp-port>:8787"
@@ -115,37 +291,29 @@ services:
 
 volumes:
   mybrain_<name>_data:
+  mybrain_<name>_ollama:
 ```
 
 **.env**:
 ```env
+EMBEDDING_PROVIDER=openrouter
 OPENROUTER_API_KEY=<user's key>
 # BRAIN_SCOPE=personal
 ```
 
-Add `.mybrain/*/.env` to the project's `.gitignore` if not already there.
-
-### D6: Update .mcp.json
-
-Add the brain to `.mcp.json` in the project root (create if needed):
-
-For `default`:
-```json
-{ "mcpServers": { "mybrain": { "url": "http://localhost:8787/mcp" } } }
-```
-
-For named brains (e.g. `research`):
-```json
-{ "mcpServers": { "mybrain-research": { "url": "http://localhost:8788/mcp" } } }
-```
-
-Merge with existing entries -- do not overwrite other MCP servers.
-
 ### D7: Start and Verify
 
 ```bash
-cd .mybrain/<name> && podman compose up -d
-podman compose ps  # wait for healthy
+# OpenRouter (default)
+cd .mybrain/<name> && docker compose up -d
+
+# With Ollama
+cd .mybrain/<name> && docker compose --profile ollama up -d
+```
+
+Register the MCP:
+```bash
+claude mcp add mybrain --transport http --url "http://localhost:<mcp-port>"
 ```
 
 Restart Claude Code. Test: "How many thoughts do I have?"
@@ -158,24 +326,21 @@ Restart Claude Code. Test: "How many thoughts do I have?"
 
 Ask the user for:
 
-1. **RDS host** -- e.g. `my-brain.abc123.us-east-2.rds.amazonaws.com`
-2. **Database name** -- e.g. `projects_brain`
-3. **Username** -- e.g. `myuser`
-4. **Password** -- the database password
-5. **SSL mode** -- default: `?ssl=true&sslmode=no-verify`
-6. **Scope** -- what ltree scope to use for this brain (e.g. `personal`, `myproject.app`). This isolates thoughts from other users/projects sharing the same database.
-7. **OpenRouter API key** -- same as Docker path
+1. **RDS host** — e.g. `my-brain.abc123.us-east-2.rds.amazonaws.com`
+2. **Database name** — e.g. `projects_brain`
+3. **Username**
+4. **Password**
+5. **SSL mode** — default: `?ssl=true&sslmode=no-verify`
+6. **Scope** — ltree scope (e.g. `personal`, `myproject.app`)
+7. **OpenRouter API key**
 
 ### R2: Construct DATABASE_URL
 
-Build the connection string:
 ```
 postgresql://<user>:<password>@<host>:5432/<database>?ssl=true&sslmode=no-verify
 ```
 
 ### R3: Register MCP Server
-
-Run:
 
 ```bash
 claude mcp add mybrain --transport stdio \
@@ -185,13 +350,9 @@ claude mcp add mybrain --transport stdio \
   -- node <path-to-plugin>/server.mjs
 ```
 
-The path to `server.mjs` depends on how the plugin was installed:
-- Plugin marketplace: `${CLAUDE_PLUGIN_ROOT}/server.mjs` (automatic)
-- Manual clone: wherever they cloned the repo
-
 ### R4: Verify Schema
 
-The RDS database must already have the full schema (with ltree, `match_thoughts_scored()`, etc.). If the user is setting up a fresh database, run `templates/schema.sql` against it:
+If the database is fresh, apply the schema:
 
 ```bash
 psql "<DATABASE_URL>" -f templates/schema.sql
@@ -199,42 +360,53 @@ psql "<DATABASE_URL>" -f templates/schema.sql
 
 ### R5: Test
 
-Restart Claude Code. Test: "How many thoughts do I have?" -- should call `brain_stats` and return a count scoped to the user's ltree scope.
+Restart Claude Code. Test: "How many thoughts do I have?"
 
 ---
 
 ## Summary Template
 
-After either path completes:
-
 ```
 MyBrain installed successfully.
 
-Mode:       {{Docker | RDS}}
-{{if Docker}}
-Location:   .mybrain/<name>/
-Database:   PostgreSQL + pgvector (containerized, port <pg-port>)
-MCP:        http://localhost:<mcp-port>/mcp
+Mode:      {{Bundled | Docker | RDS}}
+
+{{if Bundled}}
+Container: mybrain_<name> (PostgreSQL + Ollama + MCP — one container)
+MCP:       http://localhost:<port>
+Volumes:   mybrain_<name>_pgdata, mybrain_<name>_ollama_models
+Embeddings: mxbai-embed-large (local Ollama — no API key needed)
 {{/if}}
+
+{{if Docker}}
+Location:  .mybrain/<name>/
+Database:  PostgreSQL + pgvector (port <pg-port>)
+MCP:       http://localhost:<mcp-port>
+Embeddings: {{OpenRouter | local Ollama}}
+{{/if}}
+
 {{if RDS}}
-Database:   <host>/<database>
-Scope:      <scope>
-MCP:        stdio (Claude Code CLI)
+Database:  <host>/<database>
+Scope:     <scope>
+MCP:       stdio
 {{/if}}
 
 Tools:
-  capture_thought   -- Save a thought (uses OpenRouter)
-  search_thoughts   -- Semantic search (uses OpenRouter)
-  browse_thoughts   -- List recent thoughts (free)
-  brain_stats       -- Statistics (free)
+  capture_thought   — Save a thought
+  search_thoughts   — Semantic search
+  browse_thoughts   — List recent thoughts (free)
+  brain_stats       — Statistics (free)
 
 Try: "Remember this: I just set up MyBrain"
 ```
 
+---
+
 ## Important Notes
 
 - **Do NOT use `z.record(z.any())` in zod schemas.** Use `z.record(z.string(), z.unknown())`. The MCP SDK crashes on `z.any()` from zod v4.
-- **`onsessioninitialized` is a constructor option**, not a property.
-- **Credentials must never be committed.** Ensure `.env` and connection strings with passwords are in `.gitignore`.
-- **OpenRouter credits** are needed for capture and search. Browse and stats are pure SQL (free).
-- **ltree scoping** -- when `BRAIN_SCOPE` is set, all queries filter by `scope @> ARRAY['<scope>']::ltree[]`. This lets multiple users/projects share one database without seeing each other's thoughts.
+- **`onsessioninitialized` is a constructor option**, not a property assignment.
+- **Credentials must never be committed.** Ensure `.env` files are in `.gitignore`.
+- **Bundled mode — first boot takes ~2-5 min** on a fast connection (image build + mxbai-embed-large model pull ~700 MB). Subsequent starts are under 10s.
+- **ltree scoping** — when `BRAIN_SCOPE` is set, all queries filter by `scope @> ARRAY['<scope>']::ltree[]`. Multiple users/projects can share one database without leaking thoughts.
+- **Never write to the user's shell rc files** (`~/.zshrc`, `~/.bashrc`, etc.). Print the line and let the user add it.
