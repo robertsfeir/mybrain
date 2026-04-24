@@ -21,7 +21,7 @@ Four MCP tools Claude can call on your behalf:
 
 Two skills that ship with the plugin:
 
-- **`/mybrain-setup`** -- interactive setup wizard (Docker or RDS)
+- **`/mybrain-setup`** -- interactive setup wizard (Bundled, Docker, or RDS)
 - **`/mybrain-overview`** -- explains architecture, tools, and usage
 
 ---
@@ -45,16 +45,17 @@ Inside any Claude Code session, run:
 /mybrain-setup
 ```
 
-Claude will ask whether you want:
+Claude will ask which mode you want:
 
-- **Docker mode** -- local, self-contained. Runs PostgreSQL + pgvector + the MCP server in containers. Best if you're not sure which to pick.
+- **Bundled mode** -- PostgreSQL + Ollama + MCP server in a **single container**. No API key needed. One port. Recommended for personal use.
+- **Docker mode** -- separate containers for PostgreSQL, optional Ollama, and the MCP server. Uses OpenRouter or Ollama for embeddings.
 - **RDS mode** -- connect to a shared PostgreSQL on AWS RDS (or any remote Postgres with `pgvector` and `ltree` extensions). Best for multi-project / multi-user setups.
 
-The wizard handles the rest: scaffolding files, wiring `.mcp.json`, starting containers (Docker) or registering the MCP server (RDS), and verifying everything works.
+The wizard handles the rest: scaffolding files, wiring `.mcp.json`, starting containers, and verifying everything works.
 
-### 3. Get an OpenRouter API key
+### 3. Get an OpenRouter API key (Docker and RDS modes only)
 
-You'll need one for embeddings. It's the only external dependency.
+Bundled mode uses local Ollama — no API key needed. For Docker or RDS mode with OpenRouter:
 
 1. Sign up at <https://openrouter.ai>
 2. Create a key at <https://openrouter.ai/keys>
@@ -101,17 +102,37 @@ psql "$DATABASE_URL" -f templates/schema.sql
 
 ## Deployment Modes
 
+### Bundled mode (recommended for personal use)
+
+```
+Claude Code --HTTP--> localhost:8787
+                           |
+               ┌─────── container ──────┐
+               │  MCP server (:8787)    │
+               │  PostgreSQL (:5432)    │
+               │  Ollama (:11434)       │
+               └────────────────────────┘
+```
+
+- Everything runs in **one container** — PostgreSQL, Ollama, and the MCP server
+- **No API key needed** — embeddings are generated locally by `mxbai-embed-large` via Ollama
+- Only one port exposed to the host (`8787` by default)
+- Ollama stays in memory permanently (`OLLAMA_KEEP_ALIVE=-1`) — no cold-start latency
+- `restart: unless-stopped` — auto-starts with Docker Desktop, auto-restarts on crash
+- First boot pulls the model (~700 MB, one-time); subsequent starts are under 10 seconds
+
 ### Docker mode
 
 ```
 Claude Code --HTTP--> mybrain_mcp (:8787) --> mybrain_postgres
-                                          --> OpenRouter (embeddings)
+                                          --> OpenRouter or local Ollama (embeddings)
 ```
 
-- PostgreSQL + pgvector in containers
-- MCP server runs in a container, exposed on `http://localhost:8787/mcp`
+- PostgreSQL + pgvector in separate containers
+- MCP server runs in its own container, exposed on `http://localhost:8787`
+- Supports OpenRouter (default) or local Ollama via compose profile (`--profile ollama`)
 - `BRAIN_SCOPE` is optional (single-user, single database)
-- You can run multiple named brains side-by-side on different ports
+- Run multiple named brains side-by-side on different ports
 
 ### RDS mode
 
@@ -128,7 +149,7 @@ Claude Code --stdio--> server.mjs --> AWS RDS (your database)
 
 ## How Semantic Search Works
 
-When you capture a thought, the text is sent to OpenRouter (`text-embedding-3-small`) and returned as a 1536-dimensional vector. That vector is stored next to your text in PostgreSQL with an HNSW index.
+When you capture a thought, the text is sent to the embedding provider — local Ollama (`mxbai-embed-large`) in Bundled mode, or OpenRouter (`text-embedding-3-small`) in Docker/RDS mode — and returned as a 1024-dimensional vector. That vector is stored next to your text in PostgreSQL with an HNSW index.
 
 When you search, your query is embedded the same way and scored with the **three-axis formula**:
 
@@ -146,9 +167,13 @@ Every thought carries an `ltree[]` scope (e.g. `personal`, `work.acme.app`). Whe
 
 ## Requirements
 
+**Bundled mode:**
+- Docker Desktop
+
 **Docker mode:**
 - Podman or Docker
 - Node.js 18+ (only if you install manually)
+- OpenRouter API key, or local Ollama (via compose profile)
 
 **RDS mode:**
 - Node.js 18+
@@ -176,34 +201,51 @@ Claude will pick the right tool (`capture_thought`, `search_thoughts`, `browse_t
 
 ```
 .claude-plugin/
-  plugin.json              Plugin manifest (declares skills)
-  marketplace.json         Marketplace definition
-.mcp.json                  MCP server config (stdio, plugin-root path)
+  plugin.json                  Plugin manifest (declares skills)
+  marketplace.json             Marketplace definition
+.mcp.json                      MCP server config (stdio, plugin-root path)
 skills/
-  mybrain-setup/SKILL.md   Interactive setup wizard
-  mybrain-overview/SKILL.md Architecture + tool reference
+  mybrain-setup/SKILL.md       Interactive setup wizard (Bundled / Docker / RDS)
+  mybrain-overview/SKILL.md    Architecture + tool reference
 templates/
-  server.mjs               MCP server (dual mode: stdio + HTTP)
-  package.json             Node dependencies
-  schema.sql               Full schema (ltree, match_thoughts_scored, HNSW)
-  Dockerfile               Container image
-  compose.yml              PostgreSQL + MCP server services
-  .env.example             Environment template
-server.mjs                 Top-level server (used by stdio registration)
+  server.mjs                   MCP server (dual mode: stdio + HTTP)
+  package.json                 Node dependencies
+  schema.sql                   Full schema (ltree, match_thoughts_scored, HNSW)
+  Dockerfile                   MCP container image (Docker mode)
+  compose.yml                  Docker mode: PostgreSQL + Ollama profile + MCP
+  .env.example                 Docker / RDS environment template
+  Dockerfile.bundled           Bundled mode: single-container image (PG + Ollama + MCP)
+  compose.bundled.yml          Bundled mode: one service, one port, two volumes
+  start.sh                     Bundled mode: tini entrypoint (PG → Ollama → model pull → MCP)
+  .env.bundled.example         Bundled mode environment template
+shell/
+  mybrain-preflight.sh         POSIX health check helper (canonical logic)
+  mybrain.zsh                  zsh wrapper with preflight
+  mybrain.bash                 bash wrapper with preflight
+  mybrain.fish                 fish wrapper with preflight
+  mybrain.csh                  csh alias delegating to preflight script
+  mybrain.tcsh                 tcsh alias delegating to preflight script
+server.mjs                     Top-level server (used by stdio registration)
 ```
 
 ---
 
 ## Troubleshooting
 
+**Bundled mode first boot is slow.**
+The image build installs Node.js and copies the Ollama binary (~500 MB). Then the first container start pulls `mxbai-embed-large` (~700 MB). Both are one-time costs. After the first boot, subsequent starts complete in under 10 seconds because the model is cached in the `mybrain_ollama_models` volume.
+
+**Bundled container won't start / stays unhealthy.**
+Tail the logs: `docker logs mybrain_<name> -f`. The start sequence is: PostgreSQL → Ollama → model pull → MCP server. If it stalls at the model pull, check your internet connection. If it stalls at Ollama, the Ollama binary may not be compatible with your CPU architecture — open an issue.
+
 **"No thoughts found" on every search.**
 The schema may not be loaded. In Docker mode, run `podman compose down -v && podman compose up -d` in your `.mybrain/<name>/` directory to rebuild the volume with the schema. In RDS mode, re-run `psql "$DATABASE_URL" -f templates/schema.sql`.
 
 **`Embedding API error: 401`.**
-Your `OPENROUTER_API_KEY` is missing or invalid. Check it's set in `.env` (Docker mode) or the `claude mcp add` command (RDS mode).
+Your `OPENROUTER_API_KEY` is missing or invalid. Check it's set in `.env` (Docker mode) or the `claude mcp add` command (RDS mode). Not applicable to Bundled mode (no API key needed).
 
 **Claude doesn't see the tools.**
-Restart Claude Code after installing. In Docker mode, check the container is running and healthy: `podman compose ps` inside `.mybrain/<name>/`.
+Restart Claude Code after installing. In Docker or Bundled mode, check the container is running and healthy: `docker compose ps` inside `.mybrain/<name>/`.
 
 **`capture_thought` succeeds but `search_thoughts` returns nothing.**
 Lower the similarity threshold: `Search my brain for X with threshold 0.2`. The default is conservative.
