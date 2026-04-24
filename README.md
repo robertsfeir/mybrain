@@ -360,7 +360,27 @@ Add one line to your `~/.zshrc` (or equivalent):
 ```zsh
 MYBRAIN_HEALTH_TIMEOUT=60   # seconds to wait for container (default: 120)
 MYBRAIN_QUIET=1             # suppress all mybrain output (default: 0)
+NO_COLOR=1                  # disable ANSI colors + spinner animation
 ```
+
+### What the wait looks like
+
+When the wrapper is waiting for the container, you get a live spinner line (animated at ~10 fps) with the elapsed time and a hint for the escape hatch:
+
+```
+✻ Waiting for mybrain… (14s / 120s · Ctrl+C to skip)
+```
+
+The spinner glyph cycles in cyan; the parenthetical metadata is dimmed; `Ctrl+C` is bold yellow so it reads as a live keybinding rather than prose. Terminal status lines use a colored dot prefix:
+
+```
+● mybrain: ready after 14s — starting Claude Code                 (green)
+● mybrain: interrupted — starting Claude Code anyway …            (yellow)
+● mybrain: timed out after 120s — starting Claude Code anyway …   (yellow)
+● mybrain: docker daemon not reachable — starting Claude Code …   (yellow)
+```
+
+When stderr isn't a TTY (piped to a file, CI, etc.) or `NO_COLOR` is set, the wrapper falls back to plain text with no animation.
 
 ### Ctrl+C behavior
 
