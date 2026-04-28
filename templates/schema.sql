@@ -2,8 +2,10 @@
 -- Full schema with ltree scoping, three-axis scoring, and vector search
 -- Compatible with both local Docker and shared RDS deployments
 --
--- Run against your database:
---   psql -d mybrain -f schema.sql
+-- EMBED_DIM placeholder: substituted at scaffold time (default: 1536).
+-- Run: sed 's/{{EMBED_DIM}}/1536/g' schema.sql | psql -d mybrain -f -
+-- Or for 1024-dim local models (e.g. mxbai-embed-large):
+--   sed 's/{{EMBED_DIM}}/1024/g' schema.sql | psql -d mybrain -f -
 
 -- =============================================================================
 -- Extensions
@@ -82,7 +84,7 @@ INSERT INTO brain_config DEFAULT VALUES;
 CREATE TABLE thoughts (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   content TEXT NOT NULL,
-  embedding vector(1536),
+  embedding vector({{EMBED_DIM}}),
   metadata JSONB DEFAULT '{}',
   thought_type thought_type NOT NULL,
   source_agent source_agent NOT NULL,
@@ -147,7 +149,7 @@ CREATE TRIGGER thoughts_updated_at
 -- Where: recency_decay = 0.995 ^ hours_since_last_access
 
 CREATE OR REPLACE FUNCTION match_thoughts_scored(
-  query_embedding vector(1536),
+  query_embedding vector({{EMBED_DIM}}),
   similarity_threshold FLOAT DEFAULT 0.2,
   max_results INTEGER DEFAULT 10,
   metadata_filter JSONB DEFAULT '{}',
@@ -203,7 +205,8 @@ BEGIN
     )::FLOAT AS combined_score
   FROM thoughts t
   WHERE
-    (1 - (t.embedding <=> query_embedding)) >= similarity_threshold
+    t.embedding IS NOT NULL
+    AND (1 - (t.embedding <=> query_embedding)) >= similarity_threshold
     AND (include_invalidated OR t.status = 'active')
     AND (metadata_filter = '{}' OR t.metadata @> metadata_filter)
     AND (scope_filter IS NULL OR t.scope @> ARRAY[scope_filter])

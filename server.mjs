@@ -9,8 +9,12 @@ import crypto from "crypto";
 
 const DATABASE_URL = process.env.DATABASE_URL || "postgresql://localhost:5432/mybrain";
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const BRAIN_SCOPE = process.env.BRAIN_SCOPE; // e.g. "personal" — filters all queries to this scope
+const OLLAMA_HOST = process.env.OLLAMA_HOST || "http://localhost:11434";
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "gte-qwen2-1.5b-instruct";
+const EMBEDDING_PROVIDER = process.env.EMBEDDING_PROVIDER || "openrouter"; // "openrouter" | "ollama"
 const EMBEDDING_MODEL = "openai/text-embedding-3-small";
+const BRAIN_SCOPE = process.env.BRAIN_SCOPE; // e.g. "personal" — filters all queries to this scope
+const ASYNC_STORAGE = process.env.MYBRAIN_ASYNC_STORAGE === "true";
 
 const pool = new pg.Pool({ connectionString: DATABASE_URL });
 
@@ -18,15 +22,51 @@ pool.on("connect", async (client) => {
   await pgvector.registerTypes(client);
 });
 
+// ─── Startup dim-detection probe ───────────────────────────────────────────────
+// Reads the actual `embedding` column dimension from information_schema and logs
+// it. Informational only — never gates behavior. pgvector itself raises a clear
+// error on dimension mismatch at insert time.
+async function probeEmbeddingDim() {
+  try {
+    const { rows } = await pool.query(
+      `SELECT format_type(a.atttypid, a.atttypmod) AS col_type
+         FROM pg_attribute a
+         JOIN pg_class c ON c.oid = a.attrelid
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relname = 'thoughts'
+          AND a.attname = 'embedding'
+          AND a.attnum > 0
+          AND NOT a.attisdropped
+        LIMIT 1`
+    );
+    if (rows.length === 0) {
+      console.error("embedding dim: thoughts.embedding column not found (schema not applied?)");
+      return;
+    }
+    const colType = rows[0].col_type; // e.g. "vector(1536)"
+    const m = /vector\((\d+)\)/.exec(colType);
+    if (m) {
+      console.error(`embedding dim: ${m[1]} (detected)`);
+    } else {
+      console.error(`embedding dim: unparsable column type "${colType}"`);
+    }
+  } catch (err) {
+    console.error(`embedding dim: probe failed (${err.message})`);
+  }
+}
+
 async function getEmbedding(text) {
-  const res = await fetch("https://openrouter.ai/api/v1/embeddings", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ model: EMBEDDING_MODEL, input: text }),
-  });
+  let url, headers, body;
+  if (EMBEDDING_PROVIDER === "ollama") {
+    url = `${OLLAMA_HOST}/v1/embeddings`;
+    headers = { "Content-Type": "application/json" };
+    body = { model: OLLAMA_MODEL, input: text };
+  } else {
+    url = "https://openrouter.ai/api/v1/embeddings";
+    headers = { Authorization: `Bearer ${OPENROUTER_API_KEY}`, "Content-Type": "application/json" };
+    body = { model: EMBEDDING_MODEL, input: text };
+  }
+  const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`Embedding API error: ${res.status} ${err}`);
@@ -45,6 +85,15 @@ function registerTools(srv) {
     },
     async ({ content, metadata = {} }) => {
       const scopeArray = BRAIN_SCOPE ? [BRAIN_SCOPE] : ["default"];
+      if (ASYNC_STORAGE) {
+        const result = await pool.query(
+          `INSERT INTO thoughts (content, embedding, metadata, scope, thought_type, source_agent, source_phase, importance)
+           VALUES ($1, NULL, $2, $3::ltree[], 'insight', 'robert', 'build', 0.5)
+           RETURNING id`,
+          [content, JSON.stringify(metadata), `{${scopeArray.join(",")}}`]
+        );
+        return { content: [{ type: "text", text: `Thought queued (id: ${result.rows[0].id})` }] };
+      }
       const embedding = await getEmbedding(content);
       const result = await pool.query(
         `INSERT INTO thoughts (content, embedding, metadata, scope, thought_type, source_agent, source_phase, importance)
@@ -131,7 +180,72 @@ function registerTools(srv) {
   );
 }
 
-const mode = process.argv[2] || "stdio";
+function startEmbedWorker() {
+  const POLL_MS = Number(process.env.MYBRAIN_WORKER_POLL_MS || 500);
+  const BATCH = Number(process.env.MYBRAIN_WORKER_BATCH || 8);
+  const MAX_ATTEMPTS = 5;
+  const FAILED_IDS_CAP = 1000;
+  // In-memory attempt tracking: id -> attempt count.
+  // Prevents permanently-failing rows (dim mismatch, API error) from being
+  // retried every POLL_MS forever and starving the queue. Map preserves
+  // insertion order, so eviction of the oldest entry is O(1).
+  const failedIds = new Map();
+  let running = false;
+
+  async function tick() {
+    if (running) return;
+    running = true;
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, content FROM thoughts
+         WHERE embedding IS NULL
+         ORDER BY created_at
+         LIMIT $1`,
+        [BATCH]
+      );
+      for (const r of rows) {
+        const attempts = failedIds.get(r.id) || 0;
+        if (attempts >= MAX_ATTEMPTS) continue; // permanently skipped
+        try {
+          const vec = await getEmbedding(r.content);
+          await pool.query(
+            `UPDATE thoughts SET embedding = $1 WHERE id = $2 AND embedding IS NULL`,
+            [pgvector.toSql(vec), r.id]
+          );
+          // Success: clear any prior attempt count for this id.
+          if (failedIds.has(r.id)) failedIds.delete(r.id);
+        } catch (err) {
+          const next = attempts + 1;
+          // Cap map size: evict oldest (first inserted) before adding a new id.
+          if (!failedIds.has(r.id) && failedIds.size >= FAILED_IDS_CAP) {
+            const oldest = failedIds.keys().next().value;
+            if (oldest !== undefined) failedIds.delete(oldest);
+          }
+          failedIds.set(r.id, next);
+          if (next >= MAX_ATTEMPTS) {
+            console.error(`embed worker: row ${r.id} permanently failed after ${MAX_ATTEMPTS} attempts — skipping (last error: ${err.message})`);
+          } else {
+            console.error(`embed worker: row ${r.id} failed (attempt ${next}/${MAX_ATTEMPTS}):`, err.message);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("embed worker tick error:", err.message);
+    } finally {
+      running = false;
+    }
+  }
+
+  setInterval(tick, POLL_MS);
+  console.error(`embed worker started (poll ${POLL_MS}ms, batch ${BATCH}, max-attempts ${MAX_ATTEMPTS})`);
+}
+
+// Fire-and-forget startup probe — informational, never gates behavior
+probeEmbeddingDim();
+
+if (ASYNC_STORAGE) startEmbedWorker();
+
+const mode = process.env.MCP_TRANSPORT || process.argv[2] || "stdio";
 
 if (mode === "http") {
   const PORT = process.env.PORT || 8787;
@@ -166,6 +280,12 @@ if (mode === "http") {
       if (req.method === "OPTIONS") {
         res.writeHead(204);
         res.end();
+        return;
+      }
+
+      if (req.method === "GET" && req.url === "/health") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "ok" }));
         return;
       }
 

@@ -10,12 +10,34 @@ services:
       - "5433:5432"
     volumes:
       - mybrain_data:/var/lib/postgresql/data
-      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    # NOTE: schema.sql is NOT auto-mounted — it contains a {{EMBED_DIM}} placeholder
+    # that must be substituted before psql will accept it. Apply manually after first
+    # `docker compose up -d`:
+    #   sed 's/{{EMBED_DIM}}/1536/g' schema.sql | docker compose exec -T postgres psql -U mybrain -d mybrain -f -
+    # See SKILL.md (Docker Path) for the full instructions.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U mybrain"]
       interval: 5s
       timeout: 5s
       retries: 5
+
+  ollama:
+    image: ollama/ollama
+    container_name: mybrain_ollama
+    profiles: [ollama]
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    environment:
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gte-qwen2-1.5b-instruct}
+    entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 3 && ollama pull \"${OLLAMA_MODEL}\"; wait"]
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list 2>/dev/null | grep -q \"${OLLAMA_MODEL}\" || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 300s
 
   mcp:
     build: .
@@ -24,7 +46,12 @@ services:
       MCP_TRANSPORT: http
       PORT: "8787"
       DATABASE_URL: postgresql://mybrain:mybrain@postgres:5432/mybrain
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-openrouter}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gte-qwen2-1.5b-instruct}
+      MYBRAIN_ASYNC_STORAGE: ${MYBRAIN_ASYNC_STORAGE:-false}
+      EMBED_DIM: ${EMBED_DIM:-1536}
     ports:
       - "8787:8787"
     depends_on:
@@ -38,3 +65,4 @@ services:
 
 volumes:
   mybrain_data:
+  ollama_data:
