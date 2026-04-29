@@ -25,6 +25,10 @@ CREATE TYPE thought_type AS ENUM (
   'pattern', 'seed'
 );
 
+-- Deliberate divergence from migrated v1 DBs: v1 enums include the
+-- legacy 'cal' and 'roz' values; the fresh-install baseline drops them
+-- intentionally as deprecated. Migrated and fresh-install schemas are
+-- NOT isomorphic on this enum.
 CREATE TYPE source_agent AS ENUM (
   'eva', 'robert', 'robert-spec', 'sable', 'sable-ux',
   'sarah', 'colby', 'agatha', 'ellis',
@@ -96,8 +100,9 @@ INSERT INTO brain_config DEFAULT VALUES;
 -- Note on origin_pipeline / origin_context / trigger_when: atelier-brain stores
 -- these in `metadata` JSONB. mybrain promotes them to first-class columns per
 -- ADR-0001 § Decision 3 so the v1-to-merged migration can add them with
--- ALTER TABLE … ADD COLUMN. v0 baseline matches the migrated v1 shape so
--- fresh-install and migrated databases are isomorphic.
+-- ALTER TABLE … ADD COLUMN. The thoughts table shape matches between fresh
+-- installs and migrated v1 DBs; enum values diverge deliberately (see
+-- source_agent above — cal/roz live in migrated DBs only).
 CREATE TABLE thoughts (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   content TEXT NOT NULL,
@@ -178,6 +183,11 @@ CREATE TRIGGER thoughts_updated_at
 --   - Relevance (3.0): what you're asking about matters most
 --   - Importance (2.0): decisions outrank tactical findings
 --   - Recency (0.5): tiebreaker, not dominant — old decisions still surface
+--
+-- Migration note: migrated v1 DBs retain the v1 version of this function
+-- (RETURNS TABLE without `captured_by`) until Wave 4 (tools.mjs) issues a
+-- CREATE OR REPLACE. Until then, search results from a migrated DB will
+-- not include the captured_by column.
 
 CREATE OR REPLACE FUNCTION match_thoughts_scored(
   query_embedding vector({{EMBED_DIM}}),

@@ -5,7 +5,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
+## [2.0.0] — 2026-04-29
+
+### Added
+- **8-tool MCP API** (`agent_capture`, `agent_search`, `atelier_browse`, `atelier_stats`, `atelier_relation`, `atelier_trace`, `atelier_hydrate`, `atelier_hydrate_status`) — replaces the original 4-tool set with the full atelier-brain protocol
+- **Typed thought relations** (`atelier_relation`): source/target edges with `supersedes`, `contradicts`, `refines`, `elaborates`, `invalidates` types; graph traversal via `atelier_trace`
+- **Hydration pipeline** (`atelier_hydrate` / `atelier_hydrate_status`): session-scoped project context ingestion from disk
+- **LLM provider abstraction**: pluggable embedding providers (OpenRouter, OpenAI, Ollama, Vertex, Bedrock) configurable via `brain-config.json`
+- **Business logic layer** (`lib/`): conflict detection, TTL enforcement, consolidation, deduplication
+- **REST management backend**: HTTP transport with `/health`, `/api/thoughts`, admin endpoints
+- **v1-to-merged migration** (`migrations/001-mybrain-v1-to-merged.sql`): upgrades a mybrain v0.x database to the merged schema (new tables: `thought_relations`; new columns: `origin_pipeline`, `origin_context`, `trigger_when`, `captured_by`, `ttl_days`; new types; updated scoring function)
+- **Protocol tests** (15 tests): full round-trip coverage of all 8 tools and migration path
+
+### Changed
+- Tool names renamed to atelier protocol: `capture_thought` → `agent_capture`, `search_thoughts` → `agent_search`, `browse_thoughts` → `atelier_browse`, `brain_stats` → `atelier_stats`
+- `source_agent` enum expanded; `cal` and `roz` deprecated (present in migrated DBs only, not in fresh installs)
+- Zod validation updated to v4.x
+
+### Removed
+- Legacy 4-tool API surface (replaced by 8-tool atelier protocol above)
 
 ---
 
