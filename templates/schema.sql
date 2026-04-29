@@ -1,6 +1,7 @@
--- MyBrain Database Schema
--- Full schema with ltree scoping, three-axis scoring, and vector search
--- Compatible with both local Docker and shared RDS deployments
+-- MyBrain Database Schema (merged from atelier-brain per ADR-0001)
+-- Full schema with ltree scoping, three-axis scoring, vector search,
+-- typed relations, TTL/consolidation config, and seed/handoff/pattern types.
+-- Compatible with both local Docker and shared RDS deployments.
 --
 -- EMBED_DIM placeholder: substituted at scaffold time (default: 1536).
 -- Run: sed 's/{{EMBED_DIM}}/1536/g' schema.sql | psql -d mybrain -f -
@@ -20,16 +21,19 @@ CREATE EXTENSION IF NOT EXISTS ltree;
 
 CREATE TYPE thought_type AS ENUM (
   'decision', 'preference', 'lesson', 'rejection',
-  'drift', 'correction', 'insight', 'reflection'
+  'drift', 'correction', 'insight', 'reflection', 'handoff',
+  'pattern', 'seed'
 );
 
 CREATE TYPE source_agent AS ENUM (
-  'eva', 'cal', 'robert', 'sable', 'colby',
-  'roz', 'poirot', 'agatha', 'distillator', 'ellis'
+  'eva', 'robert', 'robert-spec', 'sable', 'sable-ux',
+  'sarah', 'colby', 'agatha', 'ellis',
+  'poirot', 'distillator', 'sherlock', 'sentinel'
 );
 
 CREATE TYPE source_phase AS ENUM (
-  'design', 'build', 'qa', 'review', 'reconciliation', 'setup'
+  'design', 'build', 'qa', 'review', 'reconciliation', 'setup', 'handoff', 'devops', 'telemetry', 'ci-watch', 'pipeline',
+  'product', 'ux', 'commit'
 );
 
 CREATE TYPE thought_status AS ENUM (
@@ -45,9 +49,10 @@ CREATE TYPE relation_type AS ENUM (
 -- Configuration Tables
 -- =============================================================================
 
+-- Thought type configuration (lookup table for TTL and defaults)
 CREATE TABLE thought_type_config (
   thought_type thought_type PRIMARY KEY,
-  default_ttl_days INTEGER,
+  default_ttl_days INTEGER,          -- NULL = never expires
   default_importance FLOAT NOT NULL DEFAULT 0.5,
   description TEXT
 );
@@ -60,8 +65,12 @@ INSERT INTO thought_type_config VALUES
   ('drift',       90,   0.8,  'Spec/UX drift findings'),
   ('correction',  90,   0.7,  'Fixes applied after drift detection'),
   ('insight',     180,  0.6,  'Mid-task discoveries'),
-  ('reflection',  NULL, 0.85, 'Consolidation-generated synthesis');
+  ('reflection',  NULL, 0.85, 'Consolidation-generated synthesis'),
+  ('handoff',     NULL, 0.9,  'Structured handoff briefs for team collaboration'),
+  ('pattern',     365,  0.7,  'Reusable implementation patterns'),
+  ('seed',        NULL, 0.5,  'Out-of-scope ideas with trigger conditions');
 
+-- Brain configuration (singleton — CHECK constraint enforces single row)
 CREATE TABLE brain_config (
   id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
   brain_enabled BOOLEAN NOT NULL DEFAULT false,
@@ -81,6 +90,14 @@ INSERT INTO brain_config DEFAULT VALUES;
 -- Core Tables
 -- =============================================================================
 
+-- Thoughts table (with importance, invalidated_at, ltree scoping, captured_by,
+-- and seed-trigger metadata as first-class columns).
+--
+-- Note on origin_pipeline / origin_context / trigger_when: atelier-brain stores
+-- these in `metadata` JSONB. mybrain promotes them to first-class columns per
+-- ADR-0001 § Decision 3 so the v1-to-merged migration can add them with
+-- ALTER TABLE … ADD COLUMN. v0 baseline matches the migrated v1 shape so
+-- fresh-install and migrated databases are isomorphic.
 CREATE TABLE thoughts (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   content TEXT NOT NULL,
@@ -91,6 +108,10 @@ CREATE TABLE thoughts (
   source_phase source_phase NOT NULL,
   importance FLOAT NOT NULL CHECK (importance >= 0 AND importance <= 1),
   trigger_event TEXT,
+  captured_by TEXT,
+  origin_pipeline TEXT,
+  origin_context TEXT,
+  trigger_when TEXT,
   status thought_status NOT NULL DEFAULT 'active',
   scope ltree[] DEFAULT ARRAY['default']::ltree[],
   invalidated_at TIMESTAMPTZ,
@@ -99,6 +120,8 @@ CREATE TABLE thoughts (
   updated_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- Thought relations table (typed edges between thoughts)
+-- Convention: source_id = NEWER/DERIVED thought, target_id = OLDER/ORIGINAL thought
 CREATE TABLE thought_relations (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   source_id UUID NOT NULL REFERENCES thoughts(id) ON DELETE CASCADE,
@@ -113,6 +136,7 @@ CREATE TABLE thought_relations (
 -- Indexes
 -- =============================================================================
 
+-- Thoughts indexes
 CREATE INDEX thoughts_embedding_idx ON thoughts USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX thoughts_metadata_idx ON thoughts USING gin (metadata);
 CREATE INDEX thoughts_scope_idx ON thoughts USING gist (scope);
@@ -122,6 +146,7 @@ CREATE INDEX thoughts_created_idx ON thoughts (created_at DESC);
 CREATE INDEX thoughts_agent_idx ON thoughts (source_agent);
 CREATE INDEX thoughts_invalidated_idx ON thoughts (invalidated_at) WHERE invalidated_at IS NOT NULL;
 
+-- Relations indexes
 CREATE INDEX relations_source_idx ON thought_relations (source_id);
 CREATE INDEX relations_target_idx ON thought_relations (target_id);
 CREATE INDEX relations_type_idx ON thought_relations (relation_type);
@@ -130,6 +155,7 @@ CREATE INDEX relations_type_idx ON thought_relations (relation_type);
 -- Triggers
 -- =============================================================================
 
+-- Auto-update updated_at on row modification
 CREATE OR REPLACE FUNCTION update_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -147,6 +173,11 @@ CREATE TRIGGER thoughts_updated_at
 -- =============================================================================
 -- Formula: score = (0.5 * recency_decay) + (2.0 * importance) + (3.0 * cosine_similarity)
 -- Where: recency_decay = 0.995 ^ hours_since_last_access
+--
+-- Weight rationale:
+--   - Relevance (3.0): what you're asking about matters most
+--   - Importance (2.0): decisions outrank tactical findings
+--   - Recency (0.5): tiebreaker, not dominant — old decisions still surface
 
 CREATE OR REPLACE FUNCTION match_thoughts_scored(
   query_embedding vector({{EMBED_DIM}}),
@@ -166,6 +197,7 @@ RETURNS TABLE (
   importance FLOAT,
   status thought_status,
   scope ltree[],
+  captured_by TEXT,
   created_at TIMESTAMPTZ,
   invalidated_at TIMESTAMPTZ,
   similarity FLOAT,
@@ -173,6 +205,7 @@ RETURNS TABLE (
   combined_score FLOAT
 ) AS $$
 BEGIN
+  -- Validate inputs
   IF query_embedding IS NULL THEN
     RAISE EXCEPTION 'query_embedding must not be NULL';
   END IF;
@@ -194,6 +227,7 @@ BEGIN
     t.importance,
     t.status,
     t.scope,
+    t.captured_by,
     t.created_at,
     t.invalidated_at,
     (1 - (t.embedding <=> query_embedding))::FLOAT AS similarity,
@@ -214,3 +248,13 @@ BEGIN
   LIMIT max_results;
 END;
 $$ LANGUAGE plpgsql;
+
+-- =============================================================================
+-- Migration Tracking
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version    TEXT PRIMARY KEY,
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  checksum   TEXT
+);
