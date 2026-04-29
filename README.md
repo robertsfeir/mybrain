@@ -8,6 +8,47 @@ Works with **Claude Code** (CLI, Desktop, and Web) over MCP.
 
 ---
 
+## Tool Rename (v2.0)
+
+mybrain v2.0 implements the 8-tool atelier-brain protocol. The four legacy
+tools (`capture_thought`, `search_thoughts`, `browse_thoughts`, `brain_stats`)
+have been **replaced** by the protocol tool surface. v1 tool names no longer
+exist on the server.
+
+| Tool | What it does |
+|---|---|
+| `agent_capture` | Store a thought with schema-enforced metadata; dedup + conflict detection + supersedes |
+| `agent_search` | Semantic search with three-axis scoring (recency + importance + relevance) |
+| `atelier_browse` | Paginated thought listing with status / type / agent / scope filters |
+| `atelier_stats` | Brain health check, counts by type / status / agent / human |
+| `atelier_relation` | Link two thoughts via a typed relation (`supersedes`, `supports`, `contradicts`, …) |
+| `atelier_trace` | Traverse the relation graph from a thought (backward / forward / both) |
+| `atelier_hydrate` | Ingest JSONL telemetry from a Claude Code project sessions directory |
+| `atelier_hydrate_status` | Poll completion state of a previous `atelier_hydrate` call |
+
+### Migration steps
+
+1. **Update tool names in your Claude Code / Cursor configs.** Any custom
+   prompts or scripts that referenced `capture_thought` / `search_thoughts` /
+   `browse_thoughts` / `brain_stats` need to be updated to the new tool names
+   above. Old names will return "tool not found".
+
+2. **Apply the v1-to-merged migration to existing databases.** v2 introduces
+   new columns (`captured_by`, `origin_pipeline`, `origin_context`,
+   `trigger_when`), new enum values (`handoff`, `pattern`, `seed`, plus
+   atelier-pipeline source agents and phases), and the `thought_relations`
+   table. The migration is purely additive and idempotent — re-running it on
+   an already-migrated database is a no-op.
+
+   ```bash
+   psql $DATABASE_URL -f migrations/001-mybrain-v1-to-merged.sql
+   ```
+
+   Fresh installs do not need to run this manually — `lib/db.mjs`'s
+   `runMigrations(pool)` applies it automatically at server startup.
+
+---
+
 ## What You Get
 
 Four MCP tools Claude can call on your behalf:

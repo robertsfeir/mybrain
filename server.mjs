@@ -1,273 +1,193 @@
+/**
+ * mybrain -- MCP Server Entry Point
+ * Personal semantic thought storage and retrieval, plus the 8 protocol tools
+ * shared with atelier-brain (mybrain ADR-0001).
+ *
+ * This is the startup orchestrator. All logic lives in lib/ modules:
+ *   config.mjs, db.mjs, embed.mjs, conflict.mjs, tools.mjs,
+ *   rest-api.mjs, consolidation.mjs, ttl.mjs, static.mjs,
+ *   crash-guards.mjs, hydrate.mjs, llm-provider.mjs, llm-response.mjs
+ */
+
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { z } from "zod";
-import pg from "pg";
-import pgvector from "pgvector/pg";
 import { createServer } from "http";
 import crypto from "crypto";
 
-const DATABASE_URL = process.env.DATABASE_URL || "postgresql://localhost:5432/mybrain";
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const OLLAMA_HOST = process.env.OLLAMA_HOST || "http://localhost:11434";
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "gte-qwen2-1.5b-instruct";
-const EMBEDDING_PROVIDER = process.env.EMBEDDING_PROVIDER || "openrouter"; // "openrouter" | "ollama"
-const EMBEDDING_MODEL = "openai/text-embedding-3-small";
-const BRAIN_SCOPE = process.env.BRAIN_SCOPE; // e.g. "personal" — filters all queries to this scope
+import { resolveConfig, resolveIdentity, buildProviderConfig } from "./lib/config.mjs";
+import { createPool, runMigrations } from "./lib/db.mjs";
+import { installCrashGuards } from "./lib/crash-guards.mjs";
+import { probeEmbeddingDim, startEmbedWorker } from "./lib/embed.mjs";
+import { registerTools } from "./lib/tools.mjs";
+import { createRestHandler } from "./lib/rest-api.mjs";
+import { handleStaticFile } from "./lib/static.mjs";
+import { startConsolidationTimer, stopConsolidationTimer } from "./lib/consolidation.mjs";
+import { startTTLTimer, stopTTLTimer } from "./lib/ttl.mjs";
+
+// Guarantee TLS relaxation reaches this process regardless of how it was launched.
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = process.env.NODE_TLS_REJECT_UNAUTHORIZED || "0";
+
+// =============================================================================
+// Configuration
+// =============================================================================
+
+const config = resolveConfig();
+if (!config) {
+  console.error(
+    "No mybrain config found. Set DATABASE_URL or create .claude/brain-config.json. Exiting."
+  );
+  process.exit(0);
+}
+
+// Backward-compat: surface OPENROUTER_API_KEY from env into the config so
+// pre-ADR-0054 setups (only `openrouter_api_key` configured) keep working.
+if (!config.openrouter_api_key && process.env.OPENROUTER_API_KEY) {
+  config.openrouter_api_key = process.env.OPENROUTER_API_KEY;
+}
+
+const DATABASE_URL = config.database_url;
+const API_TOKEN =
+  process.env.ATELIER_BRAIN_API_TOKEN ||
+  process.env.MYBRAIN_API_TOKEN ||
+  null;
 const ASYNC_STORAGE = process.env.MYBRAIN_ASYNC_STORAGE === "true";
 
-const pool = new pg.Pool({ connectionString: DATABASE_URL });
+// =============================================================================
+// Provider Config Resolution (ADR-0054)
+// =============================================================================
 
-pool.on("connect", async (client) => {
-  await pgvector.registerTypes(client);
+const embedProviderConfig = buildProviderConfig(config, "embed");
+const chatProviderConfig = buildProviderConfig(config, "chat");
+
+if (embedProviderConfig.family === "anthropic") {
+  console.error(
+    "Configuration error: embedding_provider cannot be \"anthropic\" -- " +
+    "Anthropic ships no embeddings API. Use openrouter, openai, github-models, " +
+    "or local for embedding_provider."
+  );
+  process.exit(1);
+}
+
+if (embedProviderConfig.family !== "local" && !embedProviderConfig.apiKey) {
+  console.error(
+    `Missing API key for embedding provider "${embedProviderConfig.providerName}". ` +
+    "mybrain cannot generate embeddings. Set the appropriate API key in brain-config.json " +
+    "or environment, or switch embedding_provider to \"local\"."
+  );
+  process.exit(1);
+}
+
+if (chatProviderConfig.family !== "local" && !chatProviderConfig.apiKey) {
+  console.error(
+    `Missing API key for chat provider "${chatProviderConfig.providerName}". ` +
+    "mybrain cannot run conflict classification or consolidation. Set the appropriate " +
+    "API key in brain-config.json or environment, or switch chat_provider to \"local\"."
+  );
+  process.exit(1);
+}
+
+const CAPTURED_BY = resolveIdentity();
+
+// =============================================================================
+// Database Pool
+// =============================================================================
+
+const pool = createPool(DATABASE_URL);
+
+// =============================================================================
+// Process-Level Crash Guards (with embed-worker cleanup closure)
+// =============================================================================
+//
+// Declare the worker handle BEFORE installCrashGuards so the cleanup closure
+// captures the variable (not its current `undefined` value). We assign the
+// handle below after probeEmbeddingDim + migrations succeed.
+
+let embedWorkerHandle = null;
+
+installCrashGuards({
+  exitFn: process.exit.bind(process),
+  stopConsolidation: () => {
+    stopConsolidationTimer();
+    if (embedWorkerHandle) {
+      clearInterval(embedWorkerHandle);
+      embedWorkerHandle = null;
+    }
+  },
+  stopTTL: stopTTLTimer,
+  poolEnd: () => pool.end(),
 });
 
-// ─── Startup dim-detection probe ───────────────────────────────────────────────
-// Reads the actual `embedding` column dimension from information_schema and logs
-// it. Informational only — never gates behavior. pgvector itself raises a clear
-// error on dimension mismatch at insert time.
-async function probeEmbeddingDim() {
-  try {
-    const { rows } = await pool.query(
-      `SELECT format_type(a.atttypid, a.atttypmod) AS col_type
-         FROM pg_attribute a
-         JOIN pg_class c ON c.oid = a.attrelid
-         JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE c.relname = 'thoughts'
-          AND a.attname = 'embedding'
-          AND a.attnum > 0
-          AND NOT a.attisdropped
-        LIMIT 1`
-    );
-    if (rows.length === 0) {
-      console.error("embedding dim: thoughts.embedding column not found (schema not applied?)");
-      return;
-    }
-    const colType = rows[0].col_type; // e.g. "vector(1536)"
-    const m = /vector\((\d+)\)/.exec(colType);
-    if (m) {
-      console.error(`embedding dim: ${m[1]} (detected)`);
-    } else {
-      console.error(`embedding dim: unparsable column type "${colType}"`);
-    }
-  } catch (err) {
-    console.error(`embedding dim: probe failed (${err.message})`);
-  }
+// =============================================================================
+// Schema Init + Embed Probe + Background Workers
+// =============================================================================
+
+await runMigrations(pool);
+await probeEmbeddingDim(pool);
+await startTTLTimer(pool).catch((err) =>
+  console.error("TTL timer start failed:", err.message)
+);
+await startConsolidationTimer(pool, {
+  embedConfig: embedProviderConfig,
+  chatConfig: chatProviderConfig,
+}).catch((err) =>
+  console.error("Consolidation timer start failed:", err.message)
+);
+
+if (ASYNC_STORAGE) {
+  embedWorkerHandle = startEmbedWorker(pool, embedProviderConfig);
 }
 
-async function getEmbedding(text) {
-  let url, headers, body;
-  if (EMBEDDING_PROVIDER === "ollama") {
-    url = `${OLLAMA_HOST}/v1/embeddings`;
-    headers = { "Content-Type": "application/json" };
-    body = { model: OLLAMA_MODEL, input: text };
-  } else {
-    url = "https://openrouter.ai/api/v1/embeddings";
-    headers = { Authorization: `Bearer ${OPENROUTER_API_KEY}`, "Content-Type": "application/json" };
-    body = { model: EMBEDDING_MODEL, input: text };
-  }
-  const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Embedding API error: ${res.status} ${err}`);
-  }
-  const data = await res.json();
-  return data.data[0].embedding;
-}
+// =============================================================================
+// Shared Runtime Config (passed to tool registration + REST handler)
+// =============================================================================
 
-function registerTools(srv) {
-  srv.tool(
-    "capture_thought",
-    "Save a new thought, idea, note, or piece of information to the brain.",
-    {
-      content: z.string().describe("The thought content to save"),
-      metadata: z.record(z.string(), z.unknown()).optional().describe("Optional metadata tags"),
-    },
-    async ({ content, metadata = {} }) => {
-      const scopeArray = BRAIN_SCOPE ? [BRAIN_SCOPE] : ["default"];
-      if (ASYNC_STORAGE) {
-        const result = await pool.query(
-          `INSERT INTO thoughts (content, embedding, metadata, scope, thought_type, source_agent, source_phase, importance)
-           VALUES ($1, NULL, $2, $3::ltree[], 'insight', 'robert', 'build', 0.5)
-           RETURNING id`,
-          [content, JSON.stringify(metadata), `{${scopeArray.join(",")}}`]
-        );
-        return { content: [{ type: "text", text: `Thought queued (id: ${result.rows[0].id})` }] };
-      }
-      const embedding = await getEmbedding(content);
-      const result = await pool.query(
-        `INSERT INTO thoughts (content, embedding, metadata, scope, thought_type, source_agent, source_phase, importance)
-         VALUES ($1, $2, $3, $4::ltree[], 'insight', 'robert', 'build', 0.5)
-         RETURNING id, created_at`,
-        [content, pgvector.toSql(embedding), JSON.stringify(metadata), `{${scopeArray.join(",")}}`]
-      );
-      const row = result.rows[0];
-      return { content: [{ type: "text", text: `Thought captured (id: ${row.id}, created: ${row.created_at})` }] };
-    }
-  );
+const cfg = {
+  ...config,
+  openrouter_api_key: config.openrouter_api_key || null,
+  embedProviderConfig,
+  chatProviderConfig,
+  brain_name: config.brain_name || "mybrain",
+  capturedBy: CAPTURED_BY,
+  apiToken: API_TOKEN,
+  _source: config._source,
+};
 
-  srv.tool(
-    "search_thoughts",
-    "Search for thoughts using natural language semantic search.",
-    {
-      query: z.string().describe("Natural language search query"),
-      threshold: z.number().optional().default(0.2).describe("Minimum similarity (0-1)"),
-      limit: z.number().optional().default(10).describe("Max results"),
-      filter: z.record(z.string(), z.unknown()).optional().describe("Optional metadata filter"),
-    },
-    async ({ query, threshold = 0.5, limit = 10, filter = {} }) => {
-      const embedding = await getEmbedding(query);
-      const result = await pool.query(
-        `SELECT * FROM match_thoughts_scored($1, $2, $3, $4, $5, false)`,
-        [pgvector.toSql(embedding), threshold, limit, JSON.stringify(filter), BRAIN_SCOPE || null]
-      );
-      if (result.rows.length === 0) return { content: [{ type: "text", text: "No matching thoughts found." }] };
-      const formatted = result.rows
-        .map((r) => `[${r.similarity.toFixed(3)}] (${new Date(r.created_at).toLocaleDateString()}) ${r.content}` +
-          (Object.keys(r.metadata || {}).length > 0 ? `\n  metadata: ${JSON.stringify(r.metadata)}` : ""))
-        .join("\n\n");
-      return { content: [{ type: "text", text: formatted }] };
-    }
-  );
-
-  srv.tool(
-    "browse_thoughts",
-    "Browse recent thoughts with optional filtering.",
-    {
-      limit: z.number().optional().default(20).describe("Number of thoughts"),
-      offset: z.number().optional().default(0).describe("Offset for pagination"),
-      filter: z.record(z.string(), z.unknown()).optional().describe("Optional metadata filter"),
-    },
-    async ({ limit = 20, offset = 0, filter = {} }) => {
-      const conditions = [];
-      const params = [limit, offset];
-      let paramIdx = 3;
-      if (BRAIN_SCOPE) { conditions.push(`scope @> ARRAY[$${paramIdx++}]::ltree[]`); params.push(BRAIN_SCOPE); }
-      if (Object.keys(filter).length > 0) { conditions.push(`metadata @> $${paramIdx++}`); params.push(JSON.stringify(filter)); }
-      const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-      const result = await pool.query(
-        `SELECT id, content, metadata, created_at FROM thoughts ${where} ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
-        params
-      );
-      if (result.rows.length === 0) return { content: [{ type: "text", text: "No thoughts found." }] };
-      const formatted = result.rows
-        .map((r) => `(${new Date(r.created_at).toLocaleDateString()}) ${r.content}` +
-          (Object.keys(r.metadata || {}).length > 0 ? `\n  metadata: ${JSON.stringify(r.metadata)}` : ""))
-        .join("\n\n");
-      return { content: [{ type: "text", text: formatted }] };
-    }
-  );
-
-  srv.tool(
-    "brain_stats",
-    "Get statistics about stored thoughts.",
-    {},
-    async () => {
-      const scopeFilter = BRAIN_SCOPE ? `WHERE scope @> ARRAY[$1]::ltree[]` : "";
-      const scopeParams = BRAIN_SCOPE ? [BRAIN_SCOPE] : [];
-      const countRes = await pool.query(`SELECT count(*) as total FROM thoughts ${scopeFilter}`, scopeParams);
-      const dateRes = await pool.query(`SELECT min(created_at) as earliest, max(created_at) as latest FROM thoughts ${scopeFilter}`, scopeParams);
-      const metaRes = await pool.query(`SELECT key, count(*) as cnt FROM thoughts, jsonb_each(metadata) AS kv(key, value) ${scopeFilter} GROUP BY key ORDER BY cnt DESC LIMIT 10`, scopeParams);
-      const total = countRes.rows[0].total;
-      const earliest = dateRes.rows[0].earliest;
-      const latest = dateRes.rows[0].latest;
-      const topKeys = metaRes.rows.map((r) => `${r.key}: ${r.cnt}`).join(", ");
-      let text = `Total thoughts: ${total}`;
-      if (earliest) text += `\nDate range: ${new Date(earliest).toLocaleDateString()} — ${new Date(latest).toLocaleDateString()}`;
-      if (topKeys) text += `\nTop metadata keys: ${topKeys}`;
-      return { content: [{ type: "text", text }] };
-    }
-  );
-}
-
-function startEmbedWorker() {
-  const POLL_MS = Number(process.env.MYBRAIN_WORKER_POLL_MS || 500);
-  const BATCH = Number(process.env.MYBRAIN_WORKER_BATCH || 8);
-  const MAX_ATTEMPTS = 5;
-  const FAILED_IDS_CAP = 1000;
-  // In-memory attempt tracking: id -> attempt count.
-  // Prevents permanently-failing rows (dim mismatch, API error) from being
-  // retried every POLL_MS forever and starving the queue. Map preserves
-  // insertion order, so eviction of the oldest entry is O(1).
-  const failedIds = new Map();
-  let running = false;
-
-  async function tick() {
-    if (running) return;
-    running = true;
-    try {
-      const { rows } = await pool.query(
-        `SELECT id, content FROM thoughts
-         WHERE embedding IS NULL
-         ORDER BY created_at
-         LIMIT $1`,
-        [BATCH]
-      );
-      for (const r of rows) {
-        const attempts = failedIds.get(r.id) || 0;
-        if (attempts >= MAX_ATTEMPTS) continue; // permanently skipped
-        try {
-          const vec = await getEmbedding(r.content);
-          await pool.query(
-            `UPDATE thoughts SET embedding = $1 WHERE id = $2 AND embedding IS NULL`,
-            [pgvector.toSql(vec), r.id]
-          );
-          // Success: clear any prior attempt count for this id.
-          if (failedIds.has(r.id)) failedIds.delete(r.id);
-        } catch (err) {
-          const next = attempts + 1;
-          // Cap map size: evict oldest (first inserted) before adding a new id.
-          if (!failedIds.has(r.id) && failedIds.size >= FAILED_IDS_CAP) {
-            const oldest = failedIds.keys().next().value;
-            if (oldest !== undefined) failedIds.delete(oldest);
-          }
-          failedIds.set(r.id, next);
-          if (next >= MAX_ATTEMPTS) {
-            console.error(`embed worker: row ${r.id} permanently failed after ${MAX_ATTEMPTS} attempts — skipping (last error: ${err.message})`);
-          } else {
-            console.error(`embed worker: row ${r.id} failed (attempt ${next}/${MAX_ATTEMPTS}):`, err.message);
-          }
-        }
-      }
-    } catch (err) {
-      console.error("embed worker tick error:", err.message);
-    } finally {
-      running = false;
-    }
-  }
-
-  setInterval(tick, POLL_MS);
-  console.error(`embed worker started (poll ${POLL_MS}ms, batch ${BATCH}, max-attempts ${MAX_ATTEMPTS})`);
-}
-
-// Fire-and-forget startup probe — informational, never gates behavior
-probeEmbeddingDim();
-
-if (ASYNC_STORAGE) startEmbedWorker();
+// =============================================================================
+// Server Startup
+// =============================================================================
 
 const mode = process.env.MCP_TRANSPORT || process.argv[2] || "stdio";
 
 if (mode === "http") {
+  startHttpMode(pool, cfg);
+} else {
+  await startStdioMode(pool, cfg);
+}
+
+// =============================================================================
+// HTTP Mode
+// =============================================================================
+
+function startHttpMode(pool, cfg) {
   const PORT = process.env.PORT || 8787;
   const httpSessions = new Map();
+  const handleRestApi = createRestHandler(pool, cfg);
 
   function createSessionTransport() {
-    let transport;
-    transport = new StreamableHTTPServerTransport({
+    const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => crypto.randomUUID(),
       onsessioninitialized: (sessionId) => {
         console.log(`  session initialized: ${sessionId}`);
         httpSessions.set(sessionId, transport);
       },
     });
-
     transport.onclose = () => {
       if (transport.sessionId) {
         console.log(`  session closed: ${transport.sessionId}`);
         httpSessions.delete(transport.sessionId);
       }
     };
-
     return transport;
   }
 
@@ -289,6 +209,15 @@ if (mode === "http") {
         return;
       }
 
+      // REST API + static UI route ahead of MCP session handling.
+      if (req.url.startsWith("/api/")) {
+        const handled = await handleRestApi(req, res);
+        if (handled) return;
+      }
+      if (req.url.startsWith("/ui") && req.method === "GET") {
+        if (handleStaticFile(req, res, cfg.apiToken)) return;
+      }
+
       console.log(`${req.method} ${req.url} session=${req.headers["mcp-session-id"] || "none"}`);
 
       const sessionId = req.headers["mcp-session-id"];
@@ -308,8 +237,8 @@ if (mode === "http") {
 
       if (req.method === "POST") {
         const transport = createSessionTransport();
-        const mcpServer = new McpServer({ name: "mybrain", version: "1.0.0" });
-        registerTools(mcpServer);
+        const mcpServer = new McpServer({ name: "mybrain", version: "2.0.0" });
+        registerTools(mcpServer, pool, cfg);
         await mcpServer.connect(transport);
         console.log(`  -> new session, handling initialize`);
         await transport.handleRequest(req, res);
@@ -328,11 +257,22 @@ if (mode === "http") {
   });
 
   httpServer.listen(PORT, () => {
-    console.log(`mybrain MCP server running on http://localhost:${PORT}`);
+    console.error(`mybrain MCP server running on http://localhost:${PORT} (config: ${cfg._source})`);
+    if (!cfg.apiToken) {
+      console.warn(
+        "WARNING: ATELIER_BRAIN_API_TOKEN / MYBRAIN_API_TOKEN not set — REST API running without authentication (dev mode)"
+      );
+    }
   });
-} else {
-  const server = new McpServer({ name: "mybrain", version: "1.0.0" });
-  registerTools(server);
+}
+
+// =============================================================================
+// Stdio Mode
+// =============================================================================
+
+async function startStdioMode(pool, cfg) {
+  const server = new McpServer({ name: "mybrain", version: "2.0.0" });
+  registerTools(server, pool, cfg);
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
