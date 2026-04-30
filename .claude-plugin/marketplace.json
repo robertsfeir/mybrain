@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "mybrain",
-      "version": "2.0.0",
+      "version": "2.0.1",
       "source": "./",
       "description": "Personal semantic thought storage and retrieval with vector embeddings and ltree scoping"
     }
