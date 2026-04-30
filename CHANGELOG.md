@@ -5,6 +5,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.0.3] — 2026-04-30
+
+### Fixed
+- **BUG-001**: `createSupersessionRelation` and the `conflict` branch in `handleRelations` now guard their `UPDATE thoughts SET status = ...` statements with `AND status = 'active'`. Without the guard, passing a `supersedes_id` pointing at an already-`expired` thought reclassified it to `superseded`, making it invisible to `handlePurgeExpired` permanently.
+- **BUG-002**: `agent_capture` now rejects `decision` and `preference` captures that supply more than one scope. Conflict detection (`detectConflicts`) only inspects `scope[0]`; accepting multi-scope captures of these types silently dropped conflict detection on every non-first scope.
+- **BUG-003**: `normalizeLtreeArray` wrapper added around `topMatch.scope` before calling `.some()` in the CONTRADICTION branch of `handleClassification`. Without it, a future node-postgres driver update returning `ltree[]` as a raw Postgres array string would throw `TypeError` and silently drop the conflict flag.
+- **BUG-004**: All `DROP TABLE / FUNCTION / TYPE` statements in `migration.test.mjs` and `async-search-race.test.mjs` test setup blocks are now schema-qualified (`${TEST_SCHEMA}.thoughts`, etc.) and the `search_path` is pinned to the test schema only (no `, public` fallback) during the DROP block. The `.catch(() => {})` swallow is removed — setup failures now surface. This was the direct mechanism of the 2026-04-29 production database wipe.
+- **BUG-005**: All four `tests/brain/*.test.mjs` files now read only `MYBRAIN_TEST_DATABASE_URL` (the three-fallback chain ending in `ATELIER_BRAIN_DATABASE_URL` is removed). A non-localhost host in `MYBRAIN_TEST_DATABASE_URL` triggers `process.exit(1)` before any query runs.
+
+### Added
+- **Podman test fixture** (`scripts/test-db.sh`): `up` subcommand starts a `pgvector/pgvector:0.7.1-pg16` container named `mybrain-test` on a free local port bound to `127.0.0.1`, waits for readiness, applies `templates/schema.sql`, and exports `MYBRAIN_TEST_DATABASE_URL`. `down` destroys the container. Container is the primary blast-radius boundary — no path from a passing `MYBRAIN_TEST_DATABASE_URL` to a production host.
+- **`npm test` script**: `bash -c '_dbenv=$(mktemp) && ./scripts/test-db.sh up > "$_dbenv" && source "$_dbenv"; rm -f "$_dbenv"; node --test tests/brain/*.test.mjs; _rc=$?; ./scripts/test-db.sh down; exit $_rc'` — starts the fixture, runs the suite, tears down the container, and propagates the test-runner exit code.
+
+---
+
 ## [2.0.0] — 2026-04-29
 
 ### Added

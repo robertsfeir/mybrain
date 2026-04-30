@@ -30,11 +30,21 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const MIGRATION_FILENAME = '001-mybrain-v1-to-merged.sql';
 const TEST_SCHEMA = 'mybrain_test_migration';
 
-const DATABASE_URL =
-  process.env.MYBRAIN_TEST_DATABASE_URL ||
-  process.env.DATABASE_URL ||
-  process.env.ATELIER_BRAIN_DATABASE_URL ||
-  null;
+// ADR-0058 BUG-005: hard MYBRAIN_TEST_DATABASE_URL requirement.
+// The pre-fix three-fallback chain ended in ATELIER_BRAIN_DATABASE_URL
+// (production) and produced the 2026-04-29 RDS wipe. We now read ONE env
+// var, abort on non-localhost hosts, and skip cleanly when unset.
+const DATABASE_URL = process.env.MYBRAIN_TEST_DATABASE_URL || null;
+
+if (DATABASE_URL) {
+  const u = new URL(DATABASE_URL);
+  const host = u.hostname.toLowerCase();
+  const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]';
+  if (!isLocal) {
+    console.error(`ABORT: MYBRAIN_TEST_DATABASE_URL points at non-localhost host '${host}'. Refusing to run tests.`);
+    process.exit(1);
+  }
+}
 
 // =============================================================================
 // V1 baseline schema (minimal subset that the migration expects to exist).
@@ -134,24 +144,32 @@ async function runSuite() {
       // Override to public so we can create the schema at the top level.
       await adminClient.query(`SET search_path TO public`);
       await adminClient.query(`CREATE SCHEMA IF NOT EXISTS ${TEST_SCHEMA}`);
-      // Now switch into the test schema.
-      await adminClient.query(`SET search_path TO ${TEST_SCHEMA}, public`);
+      // ADR-0058 BUG-004: pin search_path to ${TEST_SCHEMA} ONLY (no public
+      // fallback) for the DROP block so an unqualified name cannot resolve
+      // against public. Every DROP below is also explicitly schema-qualified
+      // as defense in depth. The .catch swallow is removed so any failure
+      // surfaces instead of being silently masked.
+      await adminClient.query(`SET search_path TO ${TEST_SCHEMA}`);
 
       // Drop any objects left from a prior failed run within this schema.
       await adminClient.query(`
-        DROP TABLE IF EXISTS thought_relations CASCADE;
-        DROP TABLE IF EXISTS thoughts CASCADE;
-        DROP TABLE IF EXISTS brain_config CASCADE;
-        DROP TABLE IF EXISTS thought_type_config CASCADE;
-        DROP TABLE IF EXISTS schema_migrations CASCADE;
-        DROP FUNCTION IF EXISTS match_thoughts_scored(vector, FLOAT, INTEGER, JSONB, ltree, BOOLEAN) CASCADE;
-        DROP FUNCTION IF EXISTS update_updated_at() CASCADE;
-        DROP TYPE IF EXISTS relation_type CASCADE;
-        DROP TYPE IF EXISTS thought_status CASCADE;
-        DROP TYPE IF EXISTS source_phase CASCADE;
-        DROP TYPE IF EXISTS source_agent CASCADE;
-        DROP TYPE IF EXISTS thought_type CASCADE;
-      `).catch(() => { /* tolerate if objects don't exist */ });
+        DROP TABLE IF EXISTS ${TEST_SCHEMA}.thought_relations CASCADE;
+        DROP TABLE IF EXISTS ${TEST_SCHEMA}.thoughts CASCADE;
+        DROP TABLE IF EXISTS ${TEST_SCHEMA}.brain_config CASCADE;
+        DROP TABLE IF EXISTS ${TEST_SCHEMA}.thought_type_config CASCADE;
+        DROP TABLE IF EXISTS ${TEST_SCHEMA}.schema_migrations CASCADE;
+        DROP FUNCTION IF EXISTS ${TEST_SCHEMA}.match_thoughts_scored(vector, FLOAT, INTEGER, JSONB, ltree, BOOLEAN) CASCADE;
+        DROP FUNCTION IF EXISTS ${TEST_SCHEMA}.update_updated_at() CASCADE;
+        DROP TYPE IF EXISTS ${TEST_SCHEMA}.relation_type CASCADE;
+        DROP TYPE IF EXISTS ${TEST_SCHEMA}.thought_status CASCADE;
+        DROP TYPE IF EXISTS ${TEST_SCHEMA}.source_phase CASCADE;
+        DROP TYPE IF EXISTS ${TEST_SCHEMA}.source_agent CASCADE;
+        DROP TYPE IF EXISTS ${TEST_SCHEMA}.thought_type CASCADE;
+      `);
+
+      // Restore search_path to include public for the schema apply step that
+      // follows (extensions live in public).
+      await adminClient.query(`SET search_path TO ${TEST_SCHEMA}, public`);
     } finally {
       adminClient.release();
     }

@@ -1,11 +1,12 @@
 {
   "name": "mybrain",
-  "version": "2.0.1",
+  "version": "2.0.3",
   "description": "Personal semantic thought storage and retrieval MCP server with vector embeddings and ltree scoping",
   "main": "server.mjs",
   "type": "module",
   "scripts": {
-    "start": "node server.mjs"
+    "start": "node server.mjs",
+    "test": "bash -c '_dbenv=$(mktemp) && ./scripts/test-db.sh up > \"$_dbenv\" && source \"$_dbenv\"; rm -f \"$_dbenv\"; node --test tests/brain/*.test.mjs; _rc=$?; ./scripts/test-db.sh down; exit $_rc'"
   },
   "keywords": ["mcp", "brain", "semantic-search", "embeddings"],
   "author": {

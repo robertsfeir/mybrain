@@ -43,11 +43,21 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const SCHEMA_PATH = path.join(REPO_ROOT, 'templates', 'schema.sql');
 const TEST_SCHEMA = 'mybrain_test_tools';
 
-const DATABASE_URL =
-  process.env.MYBRAIN_TEST_DATABASE_URL ||
-  process.env.DATABASE_URL ||
-  process.env.ATELIER_BRAIN_DATABASE_URL ||
-  null;
+// ADR-0058 BUG-005: hard MYBRAIN_TEST_DATABASE_URL requirement.
+// The pre-fix three-fallback chain ended in ATELIER_BRAIN_DATABASE_URL
+// (production) and produced the 2026-04-29 RDS wipe. We now read ONE env
+// var, abort on non-localhost hosts, and skip cleanly when unset.
+const DATABASE_URL = process.env.MYBRAIN_TEST_DATABASE_URL || null;
+
+if (DATABASE_URL) {
+  const u = new URL(DATABASE_URL);
+  const host = u.hostname.toLowerCase();
+  const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]';
+  if (!isLocal) {
+    console.error(`ABORT: MYBRAIN_TEST_DATABASE_URL points at non-localhost host '${host}'. Refusing to run tests.`);
+    process.exit(1);
+  }
+}
 
 // =============================================================================
 // Skip-gracefully guard
