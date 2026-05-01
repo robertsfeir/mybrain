@@ -5,6 +5,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.1.0] — 2026-04-30
+
+### Added
+- **User Guide** (`guides/user-guide.md`): friendly, non-technical walkthrough of how MyBrain captures, scores, fades, and removes memories. Covers the mental model (thoughts, types, status), capture flow, three-axis scoring in plain English, TTL + recency decay with concrete numbers, duplicate/contradiction detection in three zones, reflections from clustering, scope hierarchy, soft-vs-hard removal, and an FAQ.
+- **Technical Reference** (`guides/technical-reference.md`): deep reference verified against the source. Schema (every column, enum, index), `agent_capture` flow step by step, embedding subsystem (retries, async worker, `flushEmbedQueue` race fix), exact scoring SQL with decay table, conflict-detection decision tree with thresholds and the verbatim LLM prompt, consolidation algorithm (clustering, synthesis), TTL pass, removal-status matrix, traversal CTEs, ltree rules, full config + provider preset table, all 8 MCP tools with schemas, all 11 REST endpoints, hydration pipeline, and migrations.
+- **Docs callout** at the top of `README.md` linking to both new guides.
+
+### Changed
+- **License: MIT → Apache 2.0.** `LICENSE` replaced with the canonical Apache 2.0 text. `package.json` SPDX identifier corrected (was previously `"ISC"`, never matched the shipped MIT LICENSE) and `templates/package.json` SPDX identifier updated to match. GitHub repo metadata auto-updates on merge.
+- **README modernized**: stale legacy-tool references (`capture_thought` / `search_thoughts` / `browse_thoughts` / `brain_stats`) in §"What You Get", §"Async Memory Storage", §"Usage Examples", and the troubleshooting section replaced with current 8-tool API names. Added a per-call cost note covering embedding and chat costs.
+- **CLAUDE.md source-layout entry** for `ui/` corrected — the directory is currently a placeholder, not populated with HTML/CSS/JS assets.
+
+---
+
 ## [2.0.4] — 2026-04-30
 
 ### Fixed
