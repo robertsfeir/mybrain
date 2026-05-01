@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.0.4] — 2026-04-30
+
+### Fixed
+- **Migration runner no longer hard-fails on missing `pg_dump`** (`lib/db.mjs`): when `spawnSync("pg_dump", ...)` returns `error.code === "ENOENT"` (binary not on PATH), the runner now logs a warning and proceeds without writing a pre-migration dump instead of aborting startup. The post-migration count gate still detects data loss; the operator simply will not have a rollback dump artifact. Other spawn errors (e.g. `EACCES` on the binary) and non-zero exits remain fatal. Without this fix, every install whose host lacked `postgresql-client` failed to start once the `thoughts` table held any rows.
+
+---
+
 ## [2.0.3] — 2026-04-30
 
 ### Fixed
