@@ -6,6 +6,8 @@ Capture thoughts, ideas, notes, and decisions as you work. Ask Claude about them
 
 Works with **Claude Code** (CLI, Desktop, and Web) over MCP.
 
+> 📖 **New here?** Start with the **[User Guide](guides/user-guide.md)** — a friendly tour of how MyBrain captures, scores, fades, and removes memories. Want the deep specs (schema, scoring math, conflict thresholds, the full tool surface)? See the **[Technical Reference](guides/technical-reference.md)**.
+
 ---
 
 ## Tool Rename (v2.0)
@@ -51,14 +53,25 @@ exist on the server.
 
 ## What You Get
 
-Four MCP tools Claude can call on your behalf:
+Eight MCP tools Claude can call on your behalf (the 8-tool atelier-brain protocol — see [Tool Rename (v2.0)](#tool-rename-v20) above for the v1 → v2 mapping):
 
-| Tool | What it does | Cost |
-|---|---|---|
-| `capture_thought` | Save a thought with optional metadata | Free with local Ollama / ~$0.0001 with OpenRouter |
-| `search_thoughts` | Semantic search with three-axis scoring | Free with local Ollama / ~$0.0001 with OpenRouter |
-| `browse_thoughts` | List recent thoughts, filter by metadata | Free (pure SQL) |
-| `brain_stats` | Total count, date range, top metadata keys | Free (pure SQL) |
+| Tool | What it does |
+|---|---|
+| `agent_capture` | Save a thought with schema-enforced metadata; runs dedup + conflict detection on `decision`/`preference` types |
+| `agent_search` | Semantic search with three-axis scoring (relevance + importance + recency); refreshes recency on hits |
+| `atelier_browse` | Paginated listing filtered by status, type, agent, scope, or human |
+| `atelier_stats` | Brain health + counts by type / status / agent / human |
+| `atelier_relation` | Link two thoughts via a typed relation (`supersedes`, `supports`, `contradicts`, `evolves_from`, `triggered_by`, `synthesized_from`) |
+| `atelier_trace` | Walk the relation graph from a thought (backward / forward / both) |
+| `atelier_hydrate` | Ingest JSONL telemetry from a Claude Code project sessions directory |
+| `atelier_hydrate_status` | Poll the completion state of a previous `atelier_hydrate` call |
+
+**Per-call cost:** SQL-only tools (`atelier_browse`, `atelier_stats`, `atelier_relation`, `atelier_trace`, `atelier_hydrate_status`) are free. `agent_capture` and `agent_search` each make one embedding call (free with local Ollama; ~$0.0001 with OpenRouter `text-embedding-3-small`). `agent_capture` may also make one chat call when a `decision`/`preference` lands in the conflict-candidate zone (0.7–0.9 similarity) and `conflict_llm_enabled` is true. `atelier_hydrate` cost scales with the number of telemetry files ingested.
+
+Deeper docs:
+
+- **[User Guide](guides/user-guide.md)** — friendly walkthrough of how MyBrain captures, scores, fades, and removes memories
+- **[Technical Reference](guides/technical-reference.md)** — schema, scoring math, conflict thresholds, consolidation algorithm, REST API, full tool reference
 
 Two skills that ship with the plugin:
 
@@ -220,9 +233,9 @@ Every thought carries an `ltree[]` scope (e.g. `personal`, `work.acme.app`). Whe
 
 ## Async Memory Storage
 
-Set `MYBRAIN_ASYNC_STORAGE=true` to make `capture_thought` return in ~3ms. The thought is inserted with `embedding=NULL`; a background worker in the same Node process polls NULL-embedding rows every 500ms and backfills them. The `thoughts` table itself is the queue, so nothing is lost on crash.
+Set `MYBRAIN_ASYNC_STORAGE=true` to make `agent_capture` return in ~3ms. The thought is inserted with `embedding=NULL`; a background worker in the same Node process polls NULL-embedding rows every 500ms and backfills them. The `thoughts` table itself is the queue, so nothing is lost on crash.
 
-Trade-off: a thought is not retrievable via `search_thoughts` until the embedding lands (typically <1s). Recommended whenever the embedding call is the slow path -- i.e. local Ollama (Bundled / Native / Docker+Ollama).
+Trade-off: a thought is not retrievable via `agent_search` until the embedding lands (typically <1s). To eliminate the capture-then-search race, `agent_search` runs `flushEmbedQueue` in parallel with its own query embedding so a thought captured ~500ms before the search becomes findable on the same call. Recommended whenever the embedding call is the slow path -- i.e. local Ollama (Bundled / Native / Docker+Ollama).
 
 In stdio mode (Native / RDS) the worker only runs while Claude Code is open; thoughts captured right before you close Claude embed on next launch.
 
@@ -282,8 +295,10 @@ Once installed, talk to Claude naturally:
 - `Search my brain for anything about deployment pipelines.`
 - `How many thoughts do I have?`
 - `Capture thought: pg_dump with --data-only skips schema changes.`
+- `Trace what led to my decision about authentication.`
+- `Show me my preferences.`
 
-Claude will pick the right tool (`capture_thought`, `search_thoughts`, `browse_thoughts`, `brain_stats`) automatically.
+Claude will pick the right tool (`agent_capture`, `agent_search`, `atelier_browse`, `atelier_stats`, `atelier_relation`, `atelier_trace`) automatically.
 
 ---
 
@@ -337,8 +352,8 @@ Your `OPENROUTER_API_KEY` is missing or invalid (Docker/RDS with OpenRouter only
 **Claude doesn't see the tools.**
 Restart Claude Code after installing. In Bundled/Docker modes, check the container is running and healthy: `docker compose ps`.
 
-**`capture_thought` succeeds but `search_thoughts` returns nothing.**
-If async storage is enabled, the embedding may not have been written yet -- wait ~1s and retry. Otherwise lower the similarity threshold: `Search my brain for X with threshold 0.2`. The default is conservative.
+**`agent_capture` succeeds but `agent_search` returns nothing.**
+If async storage is enabled, the embedding may not have been written yet -- `agent_search` flushes the queue in parallel with its own query embedding, so a one-shot retry usually picks it up. Otherwise lower the similarity threshold: `Search my brain for X with threshold 0.1`. The default (0.2) is conservative.
 
 **Embedding dim mismatch on insert.**
 The MCP server logs `embedding dim: N (detected)` on startup. If your model produces a different dim than the column expects, pgvector raises a clear error. Either pull a model that matches the column dim, or rebuild the schema with the matching `{{EMBED_DIM}}`.

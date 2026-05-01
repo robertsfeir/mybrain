@@ -34,7 +34,7 @@ lib/                    — all server logic
 migrations/             — auto-applied SQL migrations (idempotent, runs at startup)
 scripts/                — out-of-band utilities (hydrate-telemetry.mjs)
 templates/              — Docker deployment scaffolding (Dockerfile, compose.yml, schema.sql)
-ui/                     — Settings UI static assets (HTML/CSS/JS)
+ui/                     — reserved for Settings UI static assets (placeholder; lib/static.mjs serves from here when populated)
 tests/brain/            — node:test integration tests (require DATABASE_URL)
 skills/                 — Claude Code skills (mybrain-setup, mybrain-overview)
 .claude-plugin/         — plugin manifest for marketplace
