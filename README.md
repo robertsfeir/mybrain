@@ -350,4 +350,4 @@ Each brain instance uses one port (Bundled: MCP 8787) or two ports (Docker: MCP 
 
 ## License
 
-MIT
+Apache License 2.0 — see [LICENSE](LICENSE) for the full text.
