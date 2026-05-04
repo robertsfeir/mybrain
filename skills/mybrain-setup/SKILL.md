@@ -223,6 +223,20 @@ Register MyBrain with **local scope** — visible to this user, in this project,
 claude mcp add mybrain --transport http --url "http://localhost:<port>"
 ```
 
+Then set `alwaysLoad: true` so mybrain tools are immediately callable from session start — no ToolSearch round-trip needed:
+
+```bash
+python3 -c "
+import json, os, subprocess
+p = os.path.expanduser('~/.claude.json')
+proj = subprocess.check_output(['git', 'rev-parse', '--show-toplevel'], text=True).strip()
+with open(p) as f: d = json.load(f)
+d.setdefault('projects', {}).setdefault(proj, {}).setdefault('mcpServers', {}).setdefault('mybrain', {})['alwaysLoad'] = True
+with open(p, 'w') as f: json.dump(d, f, indent=2)
+print('alwaysLoad: true set')
+"
+```
+
 If `claude mcp add` complains that a `mybrain` entry already exists, you missed Step 0 — run `claude mcp list`, identify the offending registration, and remove it per Step 0.3 before retrying.
 
 ### B7: Verify
@@ -439,6 +453,20 @@ Register the MCP with **local scope** (this repo only — do not pass `--scope u
 claude mcp add mybrain --transport http --url "http://localhost:<mcp-port>"
 ```
 
+Then set `alwaysLoad: true`:
+
+```bash
+python3 -c "
+import json, os, subprocess
+p = os.path.expanduser('~/.claude.json')
+proj = subprocess.check_output(['git', 'rev-parse', '--show-toplevel'], text=True).strip()
+with open(p) as f: d = json.load(f)
+d.setdefault('projects', {}).setdefault(proj, {}).setdefault('mcpServers', {}).setdefault('mybrain', {})['alwaysLoad'] = True
+with open(p, 'w') as f: json.dump(d, f, indent=2)
+print('alwaysLoad: true set')
+"
+```
+
 Restart Claude Code. Test: "How many thoughts do I have?"
 
 ---
@@ -530,6 +558,20 @@ PORT=8787 \
 claude mcp add mybrain --transport http --url "http://localhost:8787"
 ```
 
+After registration (stdio or HTTP), set `alwaysLoad: true`:
+
+```bash
+python3 -c "
+import json, os, subprocess
+p = os.path.expanduser('~/.claude.json')
+proj = subprocess.check_output(['git', 'rev-parse', '--show-toplevel'], text=True).strip()
+with open(p) as f: d = json.load(f)
+d.setdefault('projects', {}).setdefault(proj, {}).setdefault('mcpServers', {}).setdefault('mybrain', {})['alwaysLoad'] = True
+with open(p, 'w') as f: json.dump(d, f, indent=2)
+print('alwaysLoad: true set')
+"
+```
+
 The path to `server.mjs` depends on how the plugin was installed:
 - Plugin marketplace: `${CLAUDE_PLUGIN_ROOT}/server.mjs`
 - Manual clone: wherever the user cloned the repo
@@ -577,6 +619,20 @@ claude mcp add mybrain --transport stdio \
   -e BRAIN_SCOPE="<scope>" \
   -e MYBRAIN_ASYNC_STORAGE="<true|false>" \
   -- node <path-to-plugin>/server.mjs
+```
+
+Then set `alwaysLoad: true`:
+
+```bash
+python3 -c "
+import json, os, subprocess
+p = os.path.expanduser('~/.claude.json')
+proj = subprocess.check_output(['git', 'rev-parse', '--show-toplevel'], text=True).strip()
+with open(p) as f: d = json.load(f)
+d.setdefault('projects', {}).setdefault(proj, {}).setdefault('mcpServers', {}).setdefault('mybrain', {})['alwaysLoad'] = True
+with open(p, 'w') as f: json.dump(d, f, indent=2)
+print('alwaysLoad: true set')
+"
 ```
 
 ### R5: Verify Schema

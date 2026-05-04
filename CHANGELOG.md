@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.2.2] — 2026-05-04
+
+### Changed
+- **`/mybrain-setup` now sets `alwaysLoad: true` after every `claude mcp add` call** (B6, D8, N6, R4). Claude Code v2.1.121 added an `alwaysLoad` option to the MCP server config — when true, all tools from that server skip deferred tool-search loading and are immediately callable from session start. Without this, mybrain tools appeared as deferred every session and required a ToolSearch round-trip before first use, which caused the atelier pipeline's brain-capture PreToolUse hook to fire before tools were loaded. The setup step adds the field via a short Python snippet that patches `~/.claude.json` in place after `claude mcp add` writes the base registration.
+
+---
+
 ## [2.2.1] — 2026-05-04
 
 ### Removed
