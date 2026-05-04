@@ -1,16 +1,20 @@
 ---
 name: mybrain-setup
-description: Use when users want to install or set up MyBrain -- a personal knowledge base with semantic search. Supports four modes -- Bundled (single container, no API key needed), Docker (multi-container with OpenRouter or Ollama), Native (host-installed Ollama + any reachable PG), or RDS (shared remote database). Guides through setup, MCP registration, and optional install hooks.
+description: Use when users want to install or set up MyBrain -- a personal knowledge base with semantic search. Install is always per-project (local MCP scope); the only user-facing choice is which database backend to connect to (Bundled, Docker, Native, or RDS). Detects and offers to remove deprecated user/project-scoped registrations before installing.
 ---
 
 # MyBrain -- Setup
 
-This skill installs MyBrain. Four deployment modes are available:
+This skill installs MyBrain.
+
+**Install scope is always per-project (local).** The MCP server is registered with `claude mcp add` using the default local scope — it lives in this user's Claude config for this project only. It is **never** registered with `--scope user` (that registration leaks to every project on the machine and causes port races and mis-attributed thoughts) and **never** with `--scope project` (that ships the registration to teammates via `.mcp.json`). Step 0 below detects any pre-existing non-local registration and offers to remove it.
+
+The only user-facing choice during setup is **where the brain's database lives**. Four backends are supported:
 
 - **Bundled** -- PostgreSQL, Ollama, and the MCP server all run inside a **single container**. No API key needed. One port. One volume. Recommended for personal use.
 - **Docker** -- Multi-container: PostgreSQL + optional Ollama (compose profile) + MCP server. Uses OpenRouter or Ollama for embeddings.
 - **Native** -- No Docker. Ollama runs directly on the host, Postgres is whatever the user already has installed (or any reachable PG), and the MCP server runs as a local process registered via `claude mcp add`.
-- **RDS** -- Connect to a shared PostgreSQL database on AWS RDS or any reachable remote Postgres. Supports ltree scoping to isolate thoughts per user/project.
+- **RDS** -- Connect to a shared PostgreSQL database on AWS RDS or any reachable remote Postgres. Multiple repos can share one database — ltree scoping (`BRAIN_SCOPE`) isolates each repo's thoughts.
 
 ### Embedding dim and the schema
 
@@ -18,14 +22,71 @@ The schema ships with a `{{EMBED_DIM}}` placeholder that is substituted at scaff
 
 Existing installs are never auto-migrated. On startup the MCP server reads the actual `embedding` column dimension from `information_schema` and logs it (e.g. `embedding dim: 1536 (detected)`). The log line is informational — pgvector itself raises a clear error on dimension mismatch at insert time.
 
-## Step 1: Choose Deployment Mode
+## Step 0: Pre-flight — Remove Deprecated Scopes
 
-Ask the user: **"How do you want to run MyBrain?"**
+**Run this before every install, even on a fresh machine.** MyBrain previously documented `--scope user` and `--scope project` registrations. Both are now deprecated:
 
-> 1. **Bundled** — single container, self-contained, no API key (recommended)
-> 2. **Docker** — multi-container, OpenRouter or Ollama for embeddings
-> 3. **Native** — no Docker, host-installed Ollama, any reachable Postgres, MCP as a local process
-> 4. **RDS** — remote PostgreSQL on AWS RDS or any shared Postgres
+- `--scope user` makes one `mybrain` entry visible in *every* project on this machine. When two repos try to use it, one wins and the other silently mis-attributes thoughts (or fails to start, when their containers race for the same port).
+- `--scope project` writes the registration to `.mcp.json` and ships it to teammates / other clones via git, leaking machine-local URLs and ports.
+
+The new flow registers `mybrain` with **local** scope only — visible to this user, in this project, nowhere else.
+
+### 0.1 — Detect
+
+Run:
+
+```bash
+claude mcp list
+```
+
+Look at the output for any entry whose name is `mybrain` (or starts with `mybrain-`) **and** whose scope is shown as `user` or `project`. If none are found, skip to Step 1.
+
+### 0.2 — Explain and Ask
+
+If a non-local registration exists, tell the user verbatim what you found and why it matters:
+
+> "I found a `mybrain` server registered with **{user|project}** scope. That scope is deprecated — it caused brains to fail to start when multiple repos shared the same registration, and thoughts to be attributed to the wrong project. The new install is always per-project (local scope), so this old registration needs to come out before we continue."
+
+Then ask: **"Remove the {user|project}-scoped `mybrain` registration now? (yes / no)"**
+
+### 0.3 — Remove
+
+If **yes**:
+
+```bash
+# For user scope
+claude mcp remove mybrain --scope user
+
+# For project scope (also delete the entry from .mcp.json if one exists)
+claude mcp remove mybrain --scope project
+```
+
+If a `mybrain-<name>` variant is registered, repeat with that exact name.
+
+After removal, **warn the user**:
+
+> "Any **other** project on this machine that was relying on the `{user|project}`-scoped `mybrain` will no longer see a brain when you open it. Each of those projects will need to re-run `/mybrain-setup` once to register its own per-project install. Existing brain data (databases, containers, volumes) is untouched — only the Claude Code registration was removed."
+
+If **no**: stop the install. Tell the user:
+
+> "I can't safely register a per-project `mybrain` while a {user|project}-scoped one still exists — they will collide. Re-run `/mybrain-setup` when you're ready to remove it."
+
+### 0.4 — Continue
+
+Once cleanup is complete (or there was nothing to clean), proceed to Step 1.
+
+---
+
+## Step 1: Choose Database Backend
+
+Ask the user: **"Where should this repo's brain database live?"**
+
+> 1. **Bundled** — fresh PostgreSQL + Ollama in a single container, dedicated to this repo (recommended)
+> 2. **Docker** — multi-container PostgreSQL + optional Ollama, OpenRouter or local embeddings
+> 3. **Native** — no Docker; uses PostgreSQL and Ollama already installed on this host
+> 4. **RDS** — remote PostgreSQL (AWS RDS or any reachable Postgres); ltree-scoped so multiple repos can share one DB without leaking thoughts
+
+Whichever the user picks, the MCP registration in the final step will be **local-scoped** (this repo only). The choice here determines only where the data lives.
 
 - If Bundled → follow the **Bundled Path** below
 - If Docker → follow the **Docker Path** below
@@ -125,20 +186,15 @@ The first build downloads the Ollama binary and installs Node.js into the image 
 
 Wait for: `mybrain is ready — MCP HTTP at http://localhost:<port>`
 
-### B6: Register MCP Server
+### B6: Register MCP Server (local scope, this repo only)
 
-Register as a **user-scoped** MCP server (available in all projects):
-
-```bash
-claude mcp add mybrain --scope user --transport http \
-  --url "http://localhost:<port>"
-```
-
-Or project-scoped (only the current project):
+Register MyBrain with **local scope** — visible to this user, in this project, nowhere else. This is the default scope; do **not** pass `--scope user` or `--scope project`.
 
 ```bash
 claude mcp add mybrain --transport http --url "http://localhost:<port>"
 ```
+
+If `claude mcp add` complains that a `mybrain` entry already exists, you missed Step 0 — run `claude mcp list`, identify the offending registration, and remove it per Step 0.3 before retrying.
 
 ### B7: Verify
 
@@ -349,7 +405,7 @@ cd .mybrain/<name> && docker compose up -d
 cd .mybrain/<name> && docker compose --profile ollama up -d
 ```
 
-Register the MCP:
+Register the MCP with **local scope** (this repo only — do not pass `--scope user` or `--scope project`):
 ```bash
 claude mcp add mybrain --transport http --url "http://localhost:<mcp-port>"
 ```
@@ -411,7 +467,9 @@ If the database already has a `thoughts` table, do NOT re-apply the schema. The 
 
 Ask: **"Enable async memory storage? `capture_thought` returns instantly and embeddings run in the background. Trade-off: a thought becomes searchable ~1s after capture. Recommended in Native mode since local Ollama is slower than cloud embeddings. (yes / no, default: yes)"**
 
-### N6: Register the MCP Server
+### N6: Register the MCP Server (local scope, this repo only)
+
+Both register commands below use **local scope** (the default for `claude mcp add`). Do **not** pass `--scope user` or `--scope project`.
 
 Choose stdio (default) or http transport:
 
@@ -439,7 +497,7 @@ MYBRAIN_ASYNC_STORAGE="<true|false>" \
 PORT=8787 \
   node <path-to-plugin>/server.mjs http
 
-# Register with Claude Code
+# Register with Claude Code (local scope)
 claude mcp add mybrain --transport http --url "http://localhost:8787"
 ```
 
@@ -479,7 +537,9 @@ Ask: **"Enable async memory storage? `capture_thought` returns instantly and emb
 
 If yes, add `-e MYBRAIN_ASYNC_STORAGE=true` to the `claude mcp add` command in R4.
 
-### R4: Register MCP Server
+### R4: Register MCP Server (local scope, this repo only)
+
+Register with **local scope** — the default for `claude mcp add`. Do **not** pass `--scope user` or `--scope project`. The shared remote DB is namespaced per-repo by `BRAIN_SCOPE`, not by MCP scope.
 
 ```bash
 claude mcp add mybrain --transport stdio \
@@ -511,7 +571,8 @@ Restart Claude Code. Test: "How many thoughts do I have?"
 ```
 MyBrain installed successfully.
 
-Mode:      {{Bundled | Docker | Native | RDS}}
+Scope:     local (this repo only — registration is not visible to other projects)
+Backend:   {{Bundled | Docker | Native | RDS}}
 
 {{if Bundled}}
 Container: mybrain_<name> (PostgreSQL + Ollama + MCP — one container)
@@ -556,6 +617,8 @@ Try: "Remember this: I just set up MyBrain"
 
 ## Important Notes
 
+- **Install scope is always local — `--scope user` and `--scope project` are deprecated.** User scope made one `mybrain` registration visible in every project on the machine, which caused brains to fail to start (port races between repos sharing one URL) and thoughts to be attributed to the wrong project. Project scope shipped the registration to teammates via `.mcp.json`. Step 0 detects either and offers to remove it before installing. If `claude mcp add` complains "mybrain already exists" mid-install, that's the failure mode — back out, run Step 0, retry.
+- **Removing a deprecated scope affects other projects on the same machine.** When Step 0 removes a `--scope user` registration, every other project that was using it loses its `mybrain` server. Each of those projects must re-run `/mybrain-setup` once. Brain *data* (DBs, containers, volumes) is untouched — only the Claude Code registration is removed.
 - **Do NOT use `z.record(z.any())` in zod schemas.** Use `z.record(z.string(), z.unknown())`. The MCP SDK crashes on `z.any()` from zod v4.
 - **`onsessioninitialized` is a constructor option**, not a property assignment.
 - **Credentials must never be committed.** Ensure `.env` files are in `.gitignore`.

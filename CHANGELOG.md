@@ -5,6 +5,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.2.0] — 2026-05-04
+
+### Changed
+- **Install scope is now always per-project (local).** `/mybrain-setup` (`skills/mybrain-setup/SKILL.md`) registers the MCP server with `claude mcp add` using the default local scope only. Previous guidance recommended `--scope user` (and listed `--scope project` as an alternative) — both are now deprecated. User scope made one `mybrain` registration visible across every project on the machine, which caused two observed failure modes: (a) brains failing to start when multiple repos shared the same registration and raced for the same container/port, and (b) thoughts being attributed to the wrong project because the shared registration carried one repo's `BRAIN_SCOPE` into another's session.
+- **Step 1 of setup reframed** from "Choose Deployment Mode" to "Choose Database Backend." The four backends (Bundled, Docker, Native, RDS) are unchanged and still selected the same way; the renaming makes explicit that this is a *data-location* question, not an *install-scope* question. Multiple repos can still share one DB by selecting RDS (or pointing several Native installs at the same Postgres) — `BRAIN_SCOPE` (ltree) keeps each repo's thoughts isolated. Sharing the **install** (one MCP registration across repos) is no longer supported.
+
+### Added
+- **Step 0 pre-flight in `/mybrain-setup`** runs `claude mcp list` before any scaffold or container work. If any `mybrain` (or `mybrain-*`) entry is registered with `user` or `project` scope, the skill explains the deprecation, asks the user to remove it via `claude mcp remove mybrain --scope <user|project>`, and warns that any **other** project on the machine that was relying on the shared registration will need to re-run `/mybrain-setup` once. Brain data (DBs, containers, volumes) is untouched — only the Claude Code registration is removed. If the user declines the cleanup, the install stops rather than creating a colliding local-scope entry alongside the deprecated one.
+- **B6 / D8 / N6 / R4 troubleshooting hint**: each register-MCP subsection now states "local scope, this repo only" and points back at Step 0 if `claude mcp add` reports `mybrain` already exists. The four backends each carry one canonical `claude mcp add` invocation — no `--scope` flag, no alternatives.
+
+### Migration notes
+- **Existing installs created with `--scope user` continue to work** as long as only one project uses them at a time. No data migration is required. To adopt the new per-project model, run `claude mcp remove mybrain --scope user` once on the machine, then re-run `/mybrain-setup` inside each repo that needs a brain.
+- **Existing installs created with `--scope project`** (registration written to `.mcp.json` and committed) should remove the `mybrain` entry from `.mcp.json` and re-run `/mybrain-setup` locally. The new flow does not write `.mcp.json` — registrations stay in the per-user, per-project Claude config.
+
+---
+
 ## [2.1.0] — 2026-04-30
 
 ### Added

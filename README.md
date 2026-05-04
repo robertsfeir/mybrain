@@ -99,14 +99,25 @@ Inside any Claude Code session, run:
 /mybrain-setup
 ```
 
-Claude will ask **how you want to run MyBrain**. Four modes are available:
+The wizard installs MyBrain **per-project** (local MCP scope) -- the brain is registered for this user, in this project, and nowhere else. `--scope user` and `--scope project` registrations are deprecated and explicitly removed by the new flow's pre-flight step (see [Per-project install (v2.2.0+)](#per-project-install-v220) below).
+
+Claude will then ask **where this repo's brain database should live**. Four backends are available:
 
 - **Bundled** -- *(recommended)* PostgreSQL, Ollama, and the MCP server all run inside a single container. No API key. One port. One volume.
 - **Docker** -- multi-container: PostgreSQL + (optional Ollama via compose profile) + MCP server. Choose OpenRouter (cloud) or Ollama (local) for embeddings.
 - **Native** -- no Docker. Ollama on the host, any reachable PostgreSQL, MCP server as a local process.
-- **RDS** -- connect to a shared PostgreSQL on AWS RDS or any reachable remote Postgres. OpenRouter for embeddings. Best for multi-project / multi-user setups.
+- **RDS** -- connect to a shared PostgreSQL on AWS RDS or any reachable remote Postgres. OpenRouter for embeddings. `BRAIN_SCOPE` (ltree) keeps each repo's thoughts isolated when several repos share the same DB.
 
-The wizard handles the rest: scaffolding files, wiring `.mcp.json` or `claude mcp add`, starting containers (Bundled/Docker), and verifying everything works.
+The wizard handles the rest: scaffolding files, registering the MCP server with `claude mcp add` (local scope), starting containers (Bundled/Docker), and verifying everything works.
+
+#### Per-project install (v2.2.0+)
+
+As of v2.2.0, every install registers the MCP server with **local scope only**. This is the default for `claude mcp add` -- the wizard never passes `--scope user` or `--scope project`.
+
+- `--scope user` previously made one `mybrain` registration visible across every project on the machine, which caused the brain to fail to start when two repos raced for the same container/port and caused thoughts to be attributed to the wrong project.
+- `--scope project` wrote the registration to `.mcp.json` and shipped it to teammates / other clones via git.
+
+`/mybrain-setup` now begins with a **Step 0 pre-flight** that runs `claude mcp list` and offers to remove any deprecated `mybrain` registration before continuing. If you decline, the install stops -- it won't create a colliding local-scope entry alongside an existing user/project-scope one. Removing a deprecated registration affects every other project on the machine that was relying on it; each will need to re-run `/mybrain-setup` once. **Brain data (databases, containers, volumes) is untouched** -- only the Claude Code registration is removed. Multiple repos can still share one *database* by selecting **RDS** (or pointing several Native installs at the same Postgres) -- `BRAIN_SCOPE` keeps thoughts isolated.
 
 ### 3. (Optional) Get an OpenRouter API key
 
@@ -143,7 +154,7 @@ Apply the schema (`{{EMBED_DIM}}` is substituted at scaffold time, default `1536
 sed 's/{{EMBED_DIM}}/1536/g' templates/schema.sql | psql "$DATABASE_URL" -f -
 ```
 
-Then register the MCP server with Claude Code (Native or RDS-style stdio registration):
+Then register the MCP server with Claude Code (Native or RDS-style stdio registration). **Use the default local scope** -- do not pass `--scope user` or `--scope project`:
 
 ```bash
 claude mcp add mybrain --transport stdio \
