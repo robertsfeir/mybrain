@@ -110,14 +110,21 @@ Claude will then ask **where this repo's brain database should live**. Four back
 
 The wizard handles the rest: scaffolding files, registering the MCP server with `claude mcp add` (local scope), starting containers (Bundled/Docker), and verifying everything works.
 
-#### Per-project install (v2.2.0+)
+#### Per-project install (v2.2.1+)
 
-As of v2.2.0, every install registers the MCP server with **local scope only**. This is the default for `claude mcp add` -- the wizard never passes `--scope user` or `--scope project`.
+As of v2.2.1, the plugin no longer auto-registers an MCP server. The plugin is a delivery vehicle for skills, templates, and server source -- every working brain registration is an explicit `claude mcp add` driven by `/mybrain-setup`, with **local scope only**.
 
-- `--scope user` previously made one `mybrain` registration visible across every project on the machine, which caused the brain to fail to start when two repos raced for the same container/port and caused thoughts to be attributed to the wrong project.
-- `--scope project` wrote the registration to `.mcp.json` and shipped it to teammates / other clones via git.
+Three deprecated registration paths were eliminated across v2.2.0 and v2.2.1:
 
-`/mybrain-setup` now begins with a **Step 0 pre-flight** that runs `claude mcp list` and offers to remove any deprecated `mybrain` registration before continuing. If you decline, the install stops -- it won't create a colliding local-scope entry alongside an existing user/project-scope one. Removing a deprecated registration affects every other project on the machine that was relying on it; each will need to re-run `/mybrain-setup` once. **Brain data (databases, containers, volumes) is untouched** -- only the Claude Code registration is removed. Multiple repos can still share one *database* by selecting **RDS** (or pointing several Native installs at the same Postgres) -- `BRAIN_SCOPE` keeps thoughts isolated.
+- `--scope user` (deprecated in v2.2.0) -- made one `mybrain` registration visible across every project on the machine. Caused the brain to fail to start when two repos raced for the same container/port; caused thoughts to be attributed to the wrong project because the shared registration carried one repo's `BRAIN_SCOPE`.
+- `--scope project` (deprecated in v2.2.0) -- wrote the registration to `.mcp.json` and shipped it to teammates / other clones via git, leaking machine-local URLs and ports.
+- **Plugin auto-registration via shipped `.mcp.json`** (deprecated in v2.2.1) -- the plugin shipped a `.mcp.json` at its root that Claude Code's plugin loader auto-registered as `plugin:mybrain:mybrain` with a hard-coded `BRAIN_SCOPE: "personal"`. Same cross-project leak as `--scope user`, but harder to spot because it didn't show up under any user-visible scope flag. **This was the primary cause of "thoughts in the wrong project" symptoms.** v2.2.1 deletes the file from the plugin source.
+
+`/mybrain-setup` now begins with a **Step 0 pre-flight** that runs `claude mcp list` and offers to remove any of the three deprecated registrations before continuing. If you decline, the install stops -- it won't create a colliding local-scope entry alongside an existing one. Removing a deprecated registration affects every other project on the machine that was relying on it; each will need to re-run `/mybrain-setup` once. **Brain data (databases, containers, volumes) is untouched** -- only the Claude Code registration is removed.
+
+If you installed v2.2.0 or earlier, your plugin cache likely still contains the `.mcp.json` and is auto-registering `plugin:mybrain:mybrain` regardless of any other steps you take. Upgrade the plugin (`claude plugin update mybrain@mybrain`) or uninstall + reinstall, then restart Claude Code, before running `/mybrain-setup`. The Step 0 pre-flight will detect `plugin:mybrain:mybrain` and walk you through this.
+
+Multiple repos can still share one *database* by selecting **RDS** (or pointing several Native installs at the same Postgres) -- `BRAIN_SCOPE` (set per-repo in the `claude mcp add -e` invocation) keeps thoughts isolated.
 
 ### 3. (Optional) Get an OpenRouter API key
 

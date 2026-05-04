@@ -5,6 +5,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.2.1] — 2026-05-04
+
+### Removed
+- **`.mcp.json` deleted from the plugin source.** This file was added in v0.2.0 (commit `ffa921a`) as a convenience: install the plugin, have `DATABASE_URL` and `OPENROUTER_API_KEY` exported in your shell, and the plugin's `server.mjs` would run as a stdio child of Claude Code. When the plugin was installed via the marketplace, the file landed in the plugin cache and Claude Code's plugin loader auto-registered it as **`plugin:mybrain:mybrain`** with a hard-coded `BRAIN_SCOPE: "personal"` — applying to every project on the machine. This was the primary cause of the "thoughts attributed to the wrong project" symptom that v2.2.0 set out to fix; removing the `--scope user` recommendation alone in v2.2.0 was necessary but insufficient because the plugin loader was still auto-registering the same shape independently. v2.2.1 removes the file entirely. After v2.2.1, the plugin ships skills + templates + server code only — the only path to a working MCP registration is `/mybrain-setup`, which always uses `claude mcp add` with local scope per-project.
+
+### Changed
+- **`/mybrain-setup` Step 0 now also detects `plugin:mybrain:mybrain` entries.** When `claude mcp list` shows that name, Step 0 explains that it came from a v2.2.0-or-earlier `.mcp.json` cached in the plugin install, and walks the user through clearing it via `claude plugin update mybrain@mybrain` (or uninstall+reinstall). The `plugin:` prefix is the scope indicator — these entries cannot be removed with `claude mcp remove`; they are managed by the plugin loader. After upgrading to v2.2.1+ the plugin cache no longer contains `.mcp.json`, so `plugin:mybrain:mybrain` disappears on next Claude Code restart.
+- **README updated** to make explicit that the plugin no longer auto-registers an MCP server. The plugin is a delivery vehicle for skills, templates, and server source — every per-project install of mybrain is an explicit `claude mcp add` driven by `/mybrain-setup`.
+
+### Migration notes
+- **Users who installed v2.2.0 or earlier** — your plugin cache likely still has the `.mcp.json` and is auto-registering `plugin:mybrain:mybrain`. Run `claude mcp list` to confirm. To clear it, upgrade the plugin (`claude plugin update mybrain@mybrain`) or uninstall + reinstall, then restart Claude Code. After that, `/mybrain-setup` produces the canonical per-project local-scope registration.
+- **Brain data (databases, containers, volumes) is unaffected** by the upgrade; only the Claude Code registration changes shape.
+- **If a user relied on the auto-registration's "DATABASE_URL from shell env" behavior**, they need to run `/mybrain-setup` to re-create that behavior explicitly. The wizard will ask for the connection string and bake it into a per-project `claude mcp add -e` invocation. Per-repo `BRAIN_SCOPE` is set in the same command — no more shared `personal` default across all projects.
+
+### Why this was missed in v2.2.0
+The v2.2.0 audit looked at `claude mcp add` scope flags (`--scope user`, `--scope project`) and the documented setup paths. It did not inspect `.mcp.json` at the plugin root, which Claude Code's plugin loader treats as an auto-registration manifest independently of the scope flags. The two paths produced overlapping but distinct registrations (`plugin:mybrain:mybrain` from the manifest, `mybrain (scope: user)` from the documented setup). Fixing one without the other left the same cross-project bleed in place via the other path.
+
+---
+
 ## [2.2.0] — 2026-05-04
 
 ### Changed

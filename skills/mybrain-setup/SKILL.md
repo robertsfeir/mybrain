@@ -1,13 +1,13 @@
 ---
 name: mybrain-setup
-description: Use when users want to install or set up MyBrain -- a personal knowledge base with semantic search. Install is always per-project (local MCP scope); the only user-facing choice is which database backend to connect to (Bundled, Docker, Native, or RDS). Detects and offers to remove deprecated user/project-scoped registrations before installing.
+description: Use when users want to install or set up MyBrain -- a personal knowledge base with semantic search. Install is always per-project (local MCP scope); the only user-facing choice is which database backend to connect to (Bundled, Docker, Native, or RDS). Detects and offers to remove deprecated user/project/plugin-scoped registrations before installing.
 ---
 
 # MyBrain -- Setup
 
 This skill installs MyBrain.
 
-**Install scope is always per-project (local).** The MCP server is registered with `claude mcp add` using the default local scope — it lives in this user's Claude config for this project only. It is **never** registered with `--scope user` (that registration leaks to every project on the machine and causes port races and mis-attributed thoughts) and **never** with `--scope project` (that ships the registration to teammates via `.mcp.json`). Step 0 below detects any pre-existing non-local registration and offers to remove it.
+**Install scope is always per-project (local).** The MCP server is registered with `claude mcp add` using the default local scope — it lives in this user's Claude config for this project only. It is **never** registered with `--scope user` (that registration leaks to every project on the machine and causes port races and mis-attributed thoughts), **never** with `--scope project` (that ships the registration to teammates via `.mcp.json`), and **never** auto-registered by the plugin loader (v2.2.0 and earlier shipped a `.mcp.json` at the plugin root that Claude Code's plugin system would auto-register as `plugin:mybrain:mybrain` with a hard-coded `BRAIN_SCOPE: "personal"` — that file was removed in v2.2.1, but stale plugin caches may still carry it). Step 0 below detects any pre-existing non-local registration and offers to remove it.
 
 The only user-facing choice during setup is **where the brain's database lives**. Four backends are supported:
 
@@ -22,14 +22,15 @@ The schema ships with a `{{EMBED_DIM}}` placeholder that is substituted at scaff
 
 Existing installs are never auto-migrated. On startup the MCP server reads the actual `embedding` column dimension from `information_schema` and logs it (e.g. `embedding dim: 1536 (detected)`). The log line is informational — pgvector itself raises a clear error on dimension mismatch at insert time.
 
-## Step 0: Pre-flight — Remove Deprecated Scopes
+## Step 0: Pre-flight — Remove Deprecated Registrations
 
-**Run this before every install, even on a fresh machine.** MyBrain previously documented `--scope user` and `--scope project` registrations. Both are now deprecated:
+**Run this before every install, even on a fresh machine.** MyBrain previously had three non-local registration paths, all of which are now deprecated:
 
 - `--scope user` makes one `mybrain` entry visible in *every* project on this machine. When two repos try to use it, one wins and the other silently mis-attributes thoughts (or fails to start, when their containers race for the same port).
 - `--scope project` writes the registration to `.mcp.json` and ships it to teammates / other clones via git, leaking machine-local URLs and ports.
+- **Plugin auto-registration (v2.2.0 and earlier)** — the plugin shipped a `.mcp.json` at its root, which Claude Code's plugin system auto-registered as **`plugin:mybrain:mybrain`** with a hard-coded `BRAIN_SCOPE: "personal"`. This was the primary cause of "thoughts attributed to the wrong project," because every project on the machine that had the plugin enabled inherited the same registration with the same scope. v2.2.1 removed the file from the plugin source. **Existing v2.2.0 installs may still have a cached copy** until the plugin is re-installed or upgraded.
 
-The new flow registers `mybrain` with **local** scope only — visible to this user, in this project, nowhere else.
+The new flow registers `mybrain` with **local** scope only — visible to this user, in this project, nowhere else. No plugin auto-registration.
 
 ### 0.1 — Detect
 
@@ -39,19 +40,32 @@ Run:
 claude mcp list
 ```
 
-Look at the output for any entry whose name is `mybrain` (or starts with `mybrain-`) **and** whose scope is shown as `user` or `project`. If none are found, skip to Step 1.
+Inspect the output for any of the following:
+
+- An entry whose name is `mybrain` (or starts with `mybrain-`) **and** whose scope is shown as `user` or `project`.
+- An entry named `plugin:mybrain:mybrain` (or any `plugin:mybrain:*` variant). The `plugin:` prefix is the scope indicator — this entry was auto-registered by Claude Code's plugin loader from the `.mcp.json` shipped in v2.2.0 or earlier.
+
+If none of those are present, skip to Step 1.
 
 ### 0.2 — Explain and Ask
 
-If a non-local registration exists, tell the user verbatim what you found and why it matters:
+If a non-local registration exists, tell the user verbatim what you found and why it matters. Use whichever block matches:
+
+**For `--scope user` or `--scope project`:**
 
 > "I found a `mybrain` server registered with **{user|project}** scope. That scope is deprecated — it caused brains to fail to start when multiple repos shared the same registration, and thoughts to be attributed to the wrong project. The new install is always per-project (local scope), so this old registration needs to come out before we continue."
 
-Then ask: **"Remove the {user|project}-scoped `mybrain` registration now? (yes / no)"**
+Ask: **"Remove the {user|project}-scoped `mybrain` registration now? (yes / no)"**
+
+**For `plugin:mybrain:mybrain`:**
+
+> "I found a `plugin:mybrain:mybrain` entry. This was auto-registered by Claude Code's plugin loader from a `.mcp.json` shipped in mybrain v2.2.0 or earlier — it carries a hard-coded `BRAIN_SCOPE: \"personal\"` and applies to every project on the machine. v2.2.1 removed that file, but your plugin cache still has it. Until it's cleared, every project sees the same brain with the same scope, which is the bug we're fixing. The cleanest fix is to upgrade or re-install the plugin so the cache picks up the v2.2.1 source (no `.mcp.json`). Then we can register a clean per-project install."
+
+Ask: **"Upgrade the mybrain plugin to v2.2.1+ and clear the auto-registration now? (yes / no)"**
 
 ### 0.3 — Remove
 
-If **yes**:
+**For `--scope user` or `--scope project`:**
 
 ```bash
 # For user scope
@@ -63,17 +77,32 @@ claude mcp remove mybrain --scope project
 
 If a `mybrain-<name>` variant is registered, repeat with that exact name.
 
+**For `plugin:mybrain:mybrain`:**
+
+The `plugin:` registrations cannot be removed with `claude mcp remove` — they are managed by the plugin loader. Two ways to clear it:
+
+1. **Upgrade or re-install the plugin (recommended).** When the plugin cache picks up v2.2.1+, there is no `.mcp.json` to register, and the `plugin:mybrain:mybrain` entry disappears on the next Claude Code restart.
+
+   ```bash
+   claude plugin update mybrain@mybrain
+   # or, if update isn't available:
+   claude plugin uninstall mybrain
+   claude plugin install mybrain@mybrain
+   ```
+
+2. **Manual fallback (not recommended unless 1 fails).** Locate the cached plugin directory (typically `~/.claude/plugins/cache/mybrain.<hash>/` or similar — check `claude plugin path mybrain` if available) and delete the `.mcp.json` at its root. Restart Claude Code. This is fragile because the next plugin update can re-create it (it won't, on v2.2.1+, but other tooling might).
+
 After removal, **warn the user**:
 
-> "Any **other** project on this machine that was relying on the `{user|project}`-scoped `mybrain` will no longer see a brain when you open it. Each of those projects will need to re-run `/mybrain-setup` once to register its own per-project install. Existing brain data (databases, containers, volumes) is untouched — only the Claude Code registration was removed."
+> "Any **other** project on this machine that was relying on the `{user|project|plugin:mybrain:mybrain}` registration will no longer see a brain when you open it. Each of those projects will need to re-run `/mybrain-setup` once to register its own per-project install. Existing brain data (databases, containers, volumes) is untouched — only the Claude Code registration was removed."
 
 If **no**: stop the install. Tell the user:
 
-> "I can't safely register a per-project `mybrain` while a {user|project}-scoped one still exists — they will collide. Re-run `/mybrain-setup` when you're ready to remove it."
+> "I can't safely register a per-project `mybrain` while a {user|project|plugin:mybrain:mybrain} registration still exists — they will collide. Re-run `/mybrain-setup` when you're ready to clear it."
 
 ### 0.4 — Continue
 
-Once cleanup is complete (or there was nothing to clean), proceed to Step 1.
+Once cleanup is complete (or there was nothing to clean), proceed to Step 1. After cleanup, re-run `claude mcp list` and confirm no `mybrain*` entries remain before continuing.
 
 ---
 
