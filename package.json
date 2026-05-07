@@ -1,6 +1,6 @@
 {
   "name": "mybrain",
-  "version": "2.3.1",
+  "version": "2.3.2",
   "description": "Personal semantic thought storage and retrieval MCP server with vector embeddings and ltree scoping",
   "main": "server.mjs",
   "type": "module",
