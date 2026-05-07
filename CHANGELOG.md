@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.2.5] — 2026-05-07
+
+### Changed
+- **ADR-0058 rejection error is now actionable.** When `agent_capture` rejects a multi-scope `decision` or `preference`, the error message now names the specific scopes that were passed, names ADR-0058 as the constraint reason, and lists three concrete workarounds: (a) capture once per scope, (b) drop to a single scope, (c) change `thought_type` to a multi-scope-friendly type (`insight`, `pattern`, `lesson`, `correction`, `handoff`, `seed`). Previously the error said only "must have at most one scope (ADR-0058)" with no guidance, so callers had to read the ADR or guess. (`lib/tools.mjs:83-100`)
+
+---
+
 ## [2.2.4] — 2026-05-07
 
 ### Added
