@@ -5,6 +5,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.2.3] — 2026-05-07
+
+### Removed
+- **Yanked the v2.3.x series in its entirety.** v2.3.0 through v2.3.5 attempted to ship mybrain as a Claude Plugin with a CoWork install path: `userConfig` in `plugin.json` plus `${user_config.X}` substitution in `.mcp.json` to populate the MCP server's env vars. The path is not functional today. CoWork does not spawn local stdio MCP servers from plugins ([anthropics/claude-code#23424](https://github.com/anthropics/claude-code/issues/23424)) — the plugin loads its skills but the MCP tools never register, with no diagnostic surfaced to the user. Editing the plugin's cached `.mcp.json` after install does not help because CoWork uses the parse it captured at install time, not the file on disk. The userConfig dialog that *would* populate the values only fires for `/plugin install` inside Claude Code chat, not for CoWork's marketplace install path ([#39827](https://github.com/anthropics/claude-code/issues/39827)) — when required user_config is missing, the MCP server silently fails to load. v2.2.3 reverts the entire range and removes the v2.3.0–v2.3.5 git tags from the upstream so new installs cannot pick up the broken shape.
+- All v2.3.x git tags (`v2.3.0`, `v2.3.1`, `v2.3.2`, `v2.3.3`, `v2.3.4`, `v2.3.5`) deleted from `origin`. No GitHub Releases existed for v2.3.x (release publishing stopped at v2.2.2), so no release rollback was needed.
+
+### Re-attempt path (future)
+- CoWork support is feasible behind an **HTTP transport**: run `node server.mjs http` on a publicly reachable endpoint and ship a CoWork plugin variant whose `.mcp.json` declares `"type": "http", "url": "..."`. This is how Anthropic's own CoWork plugins (Asana, Atlassian, Google Workspace, etc.) work. Out of scope for v2.2.3.
+
+---
+
 ## [2.2.2] — 2026-05-04
 
 ### Changed
