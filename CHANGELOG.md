@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.3.4] — 2026-05-06
+
+### Fixed
+- **CoWork registration branches now write values directly into `.mcp.json`** (D8, N6, R4). The previous v2.3.3 branches incorrectly told users to enter credentials in a CoWork Settings UI that does not exist. The `${user_config.*}` substitution syntax is not part of the CoWork plugin spec — the only supported substitution is `${ENV_VAR_NAME}` for shell env vars. The setup skill now writes `DATABASE_URL`, `OPENROUTER_API_KEY`, and `BRAIN_SCOPE` directly into `${CLAUDE_PLUGIN_ROOT}/.mcp.json` during the setup flow, then instructs the user to restart CoWork.
+
+---
+
 ## [2.3.3] — 2026-05-06
 
 ### Changed
