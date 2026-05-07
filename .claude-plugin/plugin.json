@@ -10,10 +10,6 @@
     "email": "robert@sfeir.design"
   },
   "keywords": ["knowledge-base", "memory", "semantic-search", "mcp", "pgvector", "postgresql"],
-  "skills": [
-    "./skills/mybrain-setup",
-    "./skills/mybrain-overview"
-  ],
   "userConfig": {
     "database_url": {
       "description": "PostgreSQL connection string — e.g. postgresql://user:pass@host:5432/mybrain?ssl=true&sslmode=no-verify",
