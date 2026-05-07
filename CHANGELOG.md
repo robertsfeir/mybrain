@@ -5,6 +5,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.2.4] — 2026-05-07
+
+### Added
+- **`.mcpb` Desktop Extension distribution path.** A `manifest.json` at the repo root + `mcpb pack` produces `mybrain.mcpb`, a self-contained zip (~5 MB) installable into Claude Desktop and CoWork via drag-drop or **Settings → Extensions → Advanced settings → Extension Developer → Install Extension…**. This is the working install path for local stdio MCP in Claude Desktop / CoWork (the marketplace plugin path is broken there per anthropics/claude-code#23424). Sensitive fields (database URL, OpenRouter key) are stored in the OS keychain. Released as a downloadable artifact attached to this GitHub release. See [README → Install in Claude Desktop](README.md#install-in-claude-desktop-mcpb-recommended).
+- **`BRAIN_SCOPE` env var is now wired through.** When `agent_capture` receives no explicit `scope` argument, the server reads `process.env.BRAIN_SCOPE`, comma-splits it for multi-scope, and falls back to `["personal"]`. Previously the var was set in setup commands but never read. (`lib/tools.mjs:110`)
+- **Ollama support via env vars.** `lib/config.mjs` now synthesizes a `local`-provider config from `EMBEDDING_PROVIDER=ollama`, `OLLAMA_HOST`, and `OLLAMA_MODEL` env vars when no `brain-config.json` exists — letting `.mcpb` users pick Ollama via the install dialog without hand-writing a config file.
+- **Six fields in the `.mcpb` install dialog**: `database_url` (required, sensitive), `brain_scope` (default `personal`), `embedding_provider` (default `openrouter`), `embedding_api_key` (sensitive, optional), `ollama_host` (default `http://localhost:11434`), `ollama_model` (default `gte-qwen2-1.5b-instruct`).
+
+### Changed
+- **Default scope renamed from `"default"` to `"personal"`.** `lib/tools.mjs:110` previously fell back to `scope=["default"]` when neither `BRAIN_SCOPE` nor an explicit per-call scope was supplied. "default" is meaningless as an ltree namespace label — `"personal"` matches the install-dialog default and is what users actually want. Migration `005-rename-default-scope-to-personal.sql` re-tags any existing thoughts whose scope is exactly `["default"]` (single-element) to `["personal"]`. Multi-element scopes containing `"default"` are left alone (intentional information). Idempotent; runs once at startup.
+- **README updated** with `.mcpb` install as the primary install path; CLI plugin install demoted to "Install via Claude Code CLI" for users who primarily work in the Claude Code CLI.
+- **User Guide updated** with a pointer to the `.mcpb` GitHub Release for new users who don't have MyBrain installed yet.
+
+### Build
+- `*.mcpb` added to `.gitignore` (build artifact).
+- New build command: `mcpb pack . mybrain.mcpb` produces the redistributable bundle.
+
+---
+
 ## [2.2.3] — 2026-05-07
 
 ### Removed

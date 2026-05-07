@@ -4,6 +4,8 @@ A friendly tour of what MyBrain is, what it remembers, how it finds things again
 
 This guide is written for **people using MyBrain** — through Claude Code, Claude Desktop, Cursor, or any MCP-aware client. There is no SQL or code in here. If you want the deep technical version, head to the [Technical Reference](technical-reference.md).
 
+> **Don't have MyBrain installed yet?** The fastest path is to download `mybrain.mcpb` from the [latest GitHub Release](https://github.com/robertsfeir/mybrain/releases/latest) and drag it into Claude Desktop. Full install instructions live in the [README](../README.md#install-in-claude-desktop-mcpb-recommended).
+
 ---
 
 ## Table of Contents

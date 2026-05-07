@@ -1,10 +1,12 @@
 # MyBrain
 
-**A personal knowledge base with semantic search, delivered as a Claude Code plugin.**
+**A personal knowledge base with semantic search.**
 
 Capture thoughts, ideas, notes, and decisions as you work. Ask Claude about them later in plain English -- MyBrain finds matches by meaning, not just keywords. Everything is stored in your own PostgreSQL database with pgvector embeddings.
 
-Works with **Claude Code** (CLI, Desktop, and Web) over MCP.
+Works with **Claude Desktop** (including CoWork mode) and the **Claude Code CLI** over MCP.
+
+> ⚡ **Easiest install**: download [`mybrain.mcpb`](https://github.com/robertsfeir/mybrain/releases/latest) and drag it into Claude Desktop. See [Install in Claude Desktop](#install-in-claude-desktop-mcpb-recommended) below. For Claude Code CLI, see [Install via Claude Code CLI](#install-via-claude-code-cli).
 
 > 📖 **New here?** Start with the **[User Guide](guides/user-guide.md)** — a friendly tour of how MyBrain captures, scores, fades, and removes memories. Want the deep specs (schema, scoring math, conflict thresholds, the full tool surface)? See the **[Technical Reference](guides/technical-reference.md)**.
 
@@ -80,9 +82,41 @@ Two skills that ship with the plugin:
 
 ---
 
-## Install in Claude Code (Recommended)
+## Install in Claude Desktop (.mcpb, recommended)
 
-This is the fastest path. The plugin marketplace installs the MCP server, skills, and templates for you.
+This is the easiest path for Claude Desktop and CoWork users. The MCP server runs locally as a stdio process; sensitive credentials (DB URL, API key) are stored in your macOS Keychain (or the Windows Credential Manager).
+
+### 1. Download the .mcpb bundle
+
+Grab `mybrain.mcpb` from the [latest GitHub Release](https://github.com/robertsfeir/mybrain/releases/latest). It's a single self-contained zip — manifest + server code + bundled `node_modules` — about 5 MB.
+
+You will need **Node.js 18+** installed on your machine for the bundled server to run (`brew install node` on macOS).
+
+### 2. Install into Claude Desktop
+
+Either:
+
+- **Drag** `mybrain.mcpb` from Finder into the Claude Desktop window, or
+- **Settings → Extensions → Advanced settings → Extension Developer → Install Extension…** and pick the file.
+
+An install dialog appears asking for two values:
+
+- **PostgreSQL connection URL** — `postgres://user:pass@host:5432/dbname` (the database must have `pgvector` and `ltree` extensions)
+- **OpenRouter API key** *(optional)* — leave blank if you've configured a different provider in `brain-config.json`
+
+Click Install. Both values land in your OS keychain.
+
+### 3. Verify
+
+Open **Customize → Connectors → Desktop** — `mybrain` should appear, with the 8 brain tools listed. In a chat, ask "How many thoughts do I have?" — Claude calls `atelier_stats` and answers.
+
+> Don't have a database yet? See [Deployment Modes](#deployment-modes) below for four ways to stand one up (Bundled, Docker, Native, RDS). Or use the CLI install path's `/mybrain-setup` wizard, which scaffolds a fresh database for you, then come back here to install the `.mcpb`.
+
+---
+
+## Install via Claude Code CLI
+
+Use this path if you primarily work in the Claude Code CLI rather than Claude Desktop. The plugin marketplace installs the skills (including `/mybrain-setup`, which scaffolds a database for you) and registers the MCP server via `claude mcp add`.
 
 ### 1. Add the marketplace and install the plugin
 

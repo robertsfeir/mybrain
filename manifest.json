@@ -1,0 +1,85 @@
+{
+  "manifest_version": "0.3",
+  "name": "mybrain",
+  "display_name": "MyBrain",
+  "version": "2.2.4",
+  "description": "Personal semantic thought storage and retrieval with vector embeddings and ltree scoping",
+  "long_description": "MyBrain is a personal knowledge base with semantic search. It stores thoughts in PostgreSQL with vector embeddings (pgvector + ltree), making everything searchable by meaning rather than keyword. Runs as a local stdio MCP server. Supports OpenRouter (cloud) or Ollama (local) for embeddings.",
+  "author": {
+    "name": "Robert Sfeir",
+    "email": "robert@sfeir.design"
+  },
+  "homepage": "https://github.com/robertsfeir/mybrain",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/robertsfeir/mybrain.git"
+  },
+  "license": "Apache-2.0",
+  "keywords": ["knowledge-base", "memory", "semantic-search", "mcp", "pgvector", "postgresql", "ollama"],
+  "server": {
+    "type": "node",
+    "entry_point": "server.mjs",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server.mjs"],
+      "env": {
+        "DATABASE_URL": "${user_config.database_url}",
+        "OPENROUTER_API_KEY": "${user_config.embedding_api_key}",
+        "BRAIN_SCOPE": "${user_config.brain_scope}",
+        "EMBEDDING_PROVIDER": "${user_config.embedding_provider}",
+        "OLLAMA_HOST": "${user_config.ollama_host}",
+        "OLLAMA_MODEL": "${user_config.ollama_model}"
+      }
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  },
+  "user_config": {
+    "database_url": {
+      "type": "string",
+      "title": "PostgreSQL connection URL",
+      "description": "postgres://user:pass@host:5432/dbname — must have pgvector + ltree extensions installed. Local Postgres, Docker container, or remote (RDS) all work.",
+      "sensitive": true,
+      "required": true
+    },
+    "brain_scope": {
+      "type": "string",
+      "title": "Brain name / default scope",
+      "description": "ltree namespace stamped on every thought captured without an explicit scope (e.g. 'kyroco', 'personal', 'work.research'). This is what differentiates one brain from another when multiple repos share a database. Comma-separate for multiple scopes.",
+      "required": false,
+      "default": "personal"
+    },
+    "embedding_provider": {
+      "type": "string",
+      "title": "Embedding provider",
+      "description": "openrouter (cloud, requires API key) or ollama (local, free, requires Ollama running on this Mac). Leave default unless you set up Ollama.",
+      "required": false,
+      "default": "openrouter"
+    },
+    "embedding_api_key": {
+      "type": "string",
+      "title": "OpenRouter API key",
+      "description": "Used only when provider is openrouter. Get one at https://openrouter.ai/keys. Leave blank if using Ollama.",
+      "sensitive": true,
+      "required": false
+    },
+    "ollama_host": {
+      "type": "string",
+      "title": "Ollama host URL",
+      "description": "Used only when provider is ollama. Default works for a local Ollama install (brew install ollama && ollama serve).",
+      "required": false,
+      "default": "http://localhost:11434"
+    },
+    "ollama_model": {
+      "type": "string",
+      "title": "Ollama embedding model",
+      "description": "Used only when provider is ollama. Default produces 1536-dim vectors matching the default schema. Run `ollama pull <model>` first.",
+      "required": false,
+      "default": "gte-qwen2-1.5b-instruct"
+    }
+  }
+}
