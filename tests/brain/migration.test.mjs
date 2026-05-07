@@ -228,8 +228,11 @@ async function runSuite() {
     assert.equal(colRows[0].origin_context, null);
     assert.equal(colRows[0].trigger_when, null);
     assert.equal(colRows[0].status, 'active', 'status default should be "active"');
-    const scopeOk = colRows[0].scope != null && (Array.isArray(colRows[0].scope) ? colRows[0].scope.includes('default') : String(colRows[0].scope).includes('default'));
-    assert.ok(scopeOk, 'scope contains default');
+    // Migration 001 backfills v1 rows with scope = ['default']; migration 005
+    // then renames the single-element ['default'] scope to ['personal'].
+    // End state for any v1 row that flowed through both migrations is ['personal'].
+    const scopeOk = colRows[0].scope != null && (Array.isArray(colRows[0].scope) ? colRows[0].scope.includes('personal') : String(colRows[0].scope).includes('personal'));
+    assert.ok(scopeOk, `scope must contain 'personal' after migrations 001+005, got ${JSON.stringify(colRows[0].scope)}`);
   });
 
   // ---- (b) thought_relations table exists ----

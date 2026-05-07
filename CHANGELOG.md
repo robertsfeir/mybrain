@@ -5,6 +5,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.2.6] — 2026-05-07
+
+### Fixed
+- **Fresh-install bootstrap is now automatic.** `runMigrations()` previously assumed `templates/schema.sql` had already been applied — it iterated `migrations/*.sql` and crashed on migration 001's first `ALTER TYPE thought_type ADD VALUE` against a type that didn't exist. The `.mcpb` Desktop Extension install path landed users in exactly this state, surfacing as "Server disconnected" / "Could not attach to MCP server" in Claude Desktop with no further diagnostic. The runner now detects an empty database via `to_regclass('thoughts') IS NULL` and applies `templates/schema.sql` (with `{{EMBED_DIM}}` substituted to `1536`) before the migration loop, recording the bootstrap as `000-baseline-schema.sql` in `schema_migrations`. Existing v1 / v2 databases skip the bootstrap (the `thoughts` table already exists) and pick up the v1-to-merged migration on the next startup as before. Operators using a non-1536-dim embedding model still need to apply `schema.sql` by hand with the right `{{EMBED_DIM}}` substitution before first startup — the runner cannot probe the model from the database. (`lib/db.mjs:108`)
+- **`tests/brain/migration.test.mjs:231` scope assertion repaired.** The test asserted that v1 rows had `scope = ['default']` after migrations. Migration 005 (added in v2.2.4) renames the single-element `['default']` scope to `['personal']`, which made the assertion fail on every run on `main`. Updated to expect `'personal'` and added a comment documenting the migration 001+005 chain that produces the end-state. (`tests/brain/migration.test.mjs:231-235`)
+
+### Added
+- **`tests/brain/fresh-install-bootstrap.test.mjs`** — six integration tests that exercise the new bootstrap path on a truly empty PostgreSQL schema: baseline applies, all five numbered migrations + the baseline are recorded in `schema_migrations`, `brain_config` singleton has `brain_enabled=true`, `thought_type_config` has all eleven rows, `match_thoughts_scored` is callable and returns `captured_by`, and a re-run is a clean no-op (no second baseline row, no duplicated singleton, no errors). Mirrors the schema-isolation pattern in `migration.test.mjs` (dedicated `mybrain_test_fresh_bootstrap` schema with cascade teardown).
+
+### Notes
+- A pre-existing latent bug remains in `lib/db.mjs` — the migration runner reads `(atttypmod - 4)` to detect existing pgvector dim, but pgvector stores `dim` directly in atttypmod with no offset. Harmless at runtime because Postgres does not enforce `vector(N)` typmod on function args at call time, but cosmetically wrong. Worth a separate cleanup pass.
+
+---
+
 ## [2.2.5] — 2026-05-07
 
 ### Changed

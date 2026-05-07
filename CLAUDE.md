@@ -51,11 +51,7 @@ node server.mjs http      # HTTP Streamable mode (port 8787)
 
 Raw SQL with `pg` driver and `pgvector` bindings. No ORM. Embeddings stored as `vector(1536)`. Scope filtering via ltree arrays. SQL is split across `lib/` modules (tools.mjs, conflict.mjs, consolidation.mjs, ttl.mjs, rest-api.mjs, hydrate.mjs).
 
-Schema lives in `templates/schema.sql` for fresh installs. Migrations in `migrations/` auto-apply on startup via `runMigrations(pool)`. Existing v1 mybrain databases must run the v1-to-merged migration before first use:
-
-```bash
-psql $DATABASE_URL -f migrations/001-mybrain-v1-to-merged.sql
-```
+Schema lives in `templates/schema.sql`. On startup, `runMigrations(pool)` detects an empty database (via `to_regclass('thoughts') IS NULL`) and applies `templates/schema.sql` with `{{EMBED_DIM}}` substituted to `1536`, then runs the numbered migrations. Operators using a non-1536-dim embedding model must apply `schema.sql` by hand with the right substitution before first startup. The auto-bootstrap is recorded as `000-baseline-schema.sql` in `schema_migrations`. Existing v1 mybrain databases skip the bootstrap (the `thoughts` table already exists) and pick up the v1-to-merged migration on the next startup.
 
 ## MCP Tools
 
