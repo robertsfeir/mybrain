@@ -1,22 +1,21 @@
 ---
 name: mybrain-setup
-description: Use when users want to install or set up MyBrain -- a personal knowledge base with semantic search. Two install paths exist: CoWork plugin (shared brain across all projects, configured once via plugin settings) and CLI per-project (isolated brain per repo, registered with claude mcp add --scope local). Detects and removes deprecated user/project-scoped registrations before installing.
+description: "Use when users want to install or set up MyBrain -- a personal knowledge base with semantic search. Asks where the database lives (Bundled, Docker, Native, RDS) for all users, then asks how to register the MCP server (CoWork plugin settings or CLI claude mcp add per-project)."
 ---
 
 # MyBrain -- Setup
 
-This skill installs MyBrain. There are **two supported install paths**:
+This skill installs MyBrain. **Every install answers two questions in order:**
 
-**CoWork plugin path (v2.3.0+)** — When mybrain is installed as a Claude CoWork plugin, the `.mcp.json` bundled with the plugin auto-registers the MCP server using credentials stored in plugin settings (keychain). No `claude mcp add` needed. The server starts with zero tools until the user configures `database_url` in the plugin settings. This is the recommended path for personal use across multiple projects.
+1. **Where does the database live?** — Bundled, Docker, Native, or RDS. This is the same question regardless of how mybrain is registered.
+2. **How is the MCP server registered?** — CoWork plugin (credentials in plugin settings) or CLI per-project (`claude mcp add --scope local`).
 
-**CLI per-project path** — The MCP server is registered with `claude mcp add` using the default local scope — it lives in this user's Claude config for this project only. This is the correct path when you want **per-project brain isolation** (each repo has its own `BRAIN_SCOPE` and sees only its own thoughts). It is **never** registered with `--scope user` (leaks to every project, causes port races and mis-attributed thoughts) and **never** with `--scope project` (ships registration to teammates via `.mcp.json`). Step 0 below detects any pre-existing non-local registration and offers to remove it.
+**Database backends:**
 
-The only user-facing choice during setup is **where the brain's database lives**. Four backends are supported:
-
-- **Bundled** -- PostgreSQL, Ollama, and the MCP server all run inside a **single container**. No API key needed. One port. One volume. Recommended for personal use.
-- **Docker** -- Multi-container: PostgreSQL + optional Ollama (compose profile) + MCP server. Uses OpenRouter or Ollama for embeddings.
-- **Native** -- No Docker. Ollama runs directly on the host, Postgres is whatever the user already has installed (or any reachable PG), and the MCP server runs as a local process registered via `claude mcp add`.
-- **RDS** -- Connect to a shared PostgreSQL database on AWS RDS or any reachable remote Postgres. Multiple repos can share one database — ltree scoping (`BRAIN_SCOPE`) isolates each repo's thoughts.
+- **Bundled** — PostgreSQL + Ollama + MCP in a single container. No API key needed. CLI only — not available for the CoWork plugin path.
+- **Docker** — Separate PostgreSQL container + optional Ollama. Uses OpenRouter or Ollama for embeddings.
+- **Native** — No Docker. Uses host-installed Postgres and Ollama.
+- **RDS** — Remote PostgreSQL (AWS RDS or any reachable Postgres). Multiple repos can share one DB — ltree scoping (`BRAIN_SCOPE`) keeps thoughts isolated.
 
 ### Embedding dim and the schema
 
@@ -24,38 +23,18 @@ The schema ships with a `{{EMBED_DIM}}` placeholder that is substituted at scaff
 
 Existing installs are never auto-migrated. On startup the MCP server reads the actual `embedding` column dimension from `information_schema` and logs it (e.g. `embedding dim: 1536 (detected)`). The log line is informational — pgvector itself raises a clear error on dimension mismatch at insert time.
 
-## Step 0: Pre-flight — Determine Install Path and Remove Deprecated Registrations
+## Step 0: Pre-flight
 
-**Run this before every install.** First determine which path the user wants, then check for conflicts.
+### 0.0 — Registration Method
 
-### 0.0 — Which Path?
+Ask the user: **"How will mybrain be registered — CoWork plugin or CLI per-project?"**
 
-Ask the user: **"Are you setting up MyBrain as a Claude CoWork plugin (shared brain, configured once) or as a per-project CLI install (isolated brain per repo)?"**
+- **CoWork plugin**: The plugin's `.mcp.json` auto-registers the MCP server. No `claude mcp add` needed. **Skip to Step 1 now** — come back to the CoWork registration instructions at the end of whichever backend path you choose.
+- **CLI per-project**: Registered with `claude mcp add --scope local` for this repo only. Run the pre-flight check below first, then continue to Step 1.
 
-- **CoWork plugin path**: If the mybrain plugin is already enabled in Claude CoWork (visible in the Customize → Plugins menu), skip to Step 0.1 to check for CLI conflicts, then go straight to the CoWork configuration section at the end of this skill. No `claude mcp add` is needed — the plugin handles registration automatically.
-- **CLI per-project path**: Proceed through Steps 0.1–0.4 below, then continue to Step 1.
+### CLI Pre-flight Check
 
-### CoWork Plugin Path (stop here if plugin is already installed)
-
-If the user installed mybrain via Claude CoWork's "Customize → + → Add marketplace → personal plugin" flow:
-
-1. The plugin's `.mcp.json` automatically registers an MCP server using credentials from plugin settings.
-2. The server starts with **zero tools** until `database_url` is configured in the plugin settings.
-3. To activate: open **Claude CoWork → Customize → mybrain plugin → Settings** and fill in:
-   - **database_url** — PostgreSQL connection string (stored in system keychain)
-   - **embedding_api_key** — OpenRouter API key (stored in system keychain; leave blank for local Ollama)
-   - **brain_scope** — ltree namespace for your thoughts (default: `personal`)
-4. Restart Claude Code. The 8 brain tools will appear automatically.
-
-> This path is intentionally separate from the CLI per-project path. CoWork-registered tools appear as `mcp__mybrain__*`. Per-project CLI-registered tools also appear as `mcp__mybrain__*` (same namespace). **Do not run `claude mcp add` if you are using the CoWork plugin path** — the plugin registration and a manual registration will collide.
-
-**If the user wants per-project isolation** even after CoWork install: they should use the CLI path in each project repo and leave the CoWork plugin disabled for those projects.
-
----
-
-### CLI Per-Project Path: Pre-flight Check
-
-**Run this before every CLI install.** MyBrain previously had non-local registration paths, all of which are now deprecated:
+**CLI installs only.** MyBrain previously had non-local registration paths, all of which are now deprecated:
 
 - `--scope user` makes one `mybrain` entry visible in *every* project on this machine — causes port races and mis-attributed thoughts.
 - `--scope project` writes the registration to `.mcp.json` and ships it to teammates via git.
@@ -110,14 +89,14 @@ Once cleanup is complete (or there was nothing to clean), proceed to Step 1. Aft
 
 ## Step 1: Choose Database Backend
 
-Ask the user: **"Where should this repo's brain database live?"**
+**Asked for all users — CoWork and CLI alike.** The database is where your thoughts are stored. The registration method (CoWork plugin vs CLI) is handled in the final step of whichever path you choose below.
 
-> 1. **Bundled** — fresh PostgreSQL + Ollama in a single container, dedicated to this repo (recommended)
+Ask the user: **"Where should your brain's database live?"**
+
+> 1. **Bundled** — PostgreSQL + Ollama in a single container (CLI only — not available for CoWork plugin path)
 > 2. **Docker** — multi-container PostgreSQL + optional Ollama, OpenRouter or local embeddings
 > 3. **Native** — no Docker; uses PostgreSQL and Ollama already installed on this host
 > 4. **RDS** — remote PostgreSQL (AWS RDS or any reachable Postgres); ltree-scoped so multiple repos can share one DB without leaking thoughts
-
-Whichever the user picks, the MCP registration in the final step will be **local-scoped** (this repo only). The choice here determines only where the data lives.
 
 - If Bundled → follow the **Bundled Path** below
 - If Docker → follow the **Docker Path** below
@@ -217,15 +196,17 @@ The first build downloads the Ollama binary and installs Node.js into the image 
 
 Wait for: `mybrain is ready — MCP HTTP at http://localhost:<port>`
 
-### B6: Register MCP Server (local scope, this repo only)
+### B6: Register MCP Server
 
-Register MyBrain with **local scope** — visible to this user, in this project, nowhere else. This is the default scope; do **not** pass `--scope user` or `--scope project`.
+**Bundled is CLI only** — the container runs the MCP server itself, so CoWork plugin path is not available here.
+
+Register with **local scope**:
 
 ```bash
 claude mcp add mybrain --transport http --url "http://localhost:<port>"
 ```
 
-Then set `alwaysLoad: true` so mybrain tools are immediately callable from session start — no ToolSearch round-trip needed:
+Then set `alwaysLoad: true`:
 
 ```bash
 python3 -c "
@@ -450,7 +431,12 @@ cd .mybrain/<name> && docker compose up -d
 cd .mybrain/<name> && docker compose --profile ollama up -d
 ```
 
-Register the MCP with **local scope** (this repo only — do not pass `--scope user` or `--scope project`):
+**If CoWork plugin path:** Open Claude CoWork → Customize → mybrain → Settings and enter:
+- `database_url` — `postgresql://mybrain:mybrain@localhost:<pg-port>/mybrain`
+- `embedding_api_key` — your OpenRouter key (or leave blank for Ollama)
+- `brain_scope` — your ltree scope (e.g. `personal`)
+
+**If CLI per-project path:** Register with local scope:
 ```bash
 claude mcp add mybrain --transport http --url "http://localhost:<mcp-port>"
 ```
@@ -526,9 +512,16 @@ If the database already has a `thoughts` table, do NOT re-apply the schema. The 
 
 Ask: **"Enable async memory storage? `capture_thought` returns instantly and embeddings run in the background. Trade-off: a thought becomes searchable ~1s after capture. Recommended in Native mode since local Ollama is slower than cloud embeddings. (yes / no, default: yes)"**
 
-### N6: Register the MCP Server (local scope, this repo only)
+### N6: Register the MCP Server
 
-Both register commands below use **local scope** (the default for `claude mcp add`). Do **not** pass `--scope user` or `--scope project`.
+**If CoWork plugin path:** Open Claude CoWork → Customize → mybrain → Settings and enter:
+- `database_url` — the DATABASE_URL constructed in N4 (e.g. `postgresql://user@localhost:5432/mybrain`)
+- `embedding_api_key` — leave blank (Ollama needs no key)
+- `brain_scope` — the scope chosen in N3 (e.g. `personal`)
+
+CoWork reads these settings and passes them as env vars when it starts `server.mjs`. No further registration is needed — the plugin is already wired.
+
+**If CLI per-project path:** Both register commands below use **local scope** (the default for `claude mcp add`). Do **not** pass `--scope user` or `--scope project`.
 
 Choose stdio (default) or http transport:
 
@@ -610,9 +603,16 @@ Ask: **"Enable async memory storage? `capture_thought` returns instantly and emb
 
 If yes, add `-e MYBRAIN_ASYNC_STORAGE=true` to the `claude mcp add` command in R4.
 
-### R4: Register MCP Server (local scope, this repo only)
+### R4: Register MCP Server
 
-Register with **local scope** — the default for `claude mcp add`. Do **not** pass `--scope user` or `--scope project`. The shared remote DB is namespaced per-repo by `BRAIN_SCOPE`, not by MCP scope.
+**If CoWork plugin path:** Open Claude CoWork → Customize → mybrain → Settings and enter:
+- `database_url` — the DATABASE_URL constructed in R2 (e.g. `postgresql://user:pass@host:5432/db?ssl=true&sslmode=no-verify`)
+- `embedding_api_key` — your OpenRouter API key
+- `brain_scope` — the scope chosen in R1 (e.g. `personal`)
+
+CoWork reads these settings and passes them as env vars when it starts `server.mjs`. No further registration is needed — the plugin is already wired.
+
+**If CLI per-project path:** Register with **local scope** — the default for `claude mcp add`. Do **not** pass `--scope user` or `--scope project`. The shared remote DB is namespaced per-repo by `BRAIN_SCOPE`, not by MCP scope.
 
 ```bash
 claude mcp add mybrain --transport stdio \
