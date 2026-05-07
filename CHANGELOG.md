@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.3.3] — 2026-05-06
+
+### Changed
+- **`/mybrain-setup` registration steps now branch on install path for all four backends.** B6 (Bundled), D8 (Docker), N6 (Native), and R4 (RDS) each present two registration branches: **CoWork plugin path** (open Customize → mybrain → Settings, enter `database_url` / `embedding_api_key` / `brain_scope`) and **CLI per-project path** (`claude mcp add` with local scope). Previously only D8 had the CoWork branch; N6 and R4 were CLI-only. The database backend question is now always asked first regardless of install path.
+
+---
+
 ## [2.2.2] — 2026-05-04
 
 ### Changed
