@@ -1,13 +1,15 @@
 ---
 name: mybrain-setup
-description: Use when users want to install or set up MyBrain -- a personal knowledge base with semantic search. Install is always per-project (local MCP scope); the only user-facing choice is which database backend to connect to (Bundled, Docker, Native, or RDS). Detects and offers to remove deprecated user/project/plugin-scoped registrations before installing.
+description: Use when users want to install or set up MyBrain -- a personal knowledge base with semantic search. Two install paths exist: CoWork plugin (shared brain across all projects, configured once via plugin settings) and CLI per-project (isolated brain per repo, registered with claude mcp add --scope local). Detects and removes deprecated user/project-scoped registrations before installing.
 ---
 
 # MyBrain -- Setup
 
-This skill installs MyBrain.
+This skill installs MyBrain. There are **two supported install paths**:
 
-**Install scope is always per-project (local).** The MCP server is registered with `claude mcp add` using the default local scope — it lives in this user's Claude config for this project only. It is **never** registered with `--scope user` (that registration leaks to every project on the machine and causes port races and mis-attributed thoughts), **never** with `--scope project` (that ships the registration to teammates via `.mcp.json`), and **never** auto-registered by the plugin loader (v2.2.0 and earlier shipped a `.mcp.json` at the plugin root that Claude Code's plugin system would auto-register as `plugin:mybrain:mybrain` with a hard-coded `BRAIN_SCOPE: "personal"` — that file was removed in v2.2.1, but stale plugin caches may still carry it). Step 0 below detects any pre-existing non-local registration and offers to remove it.
+**CoWork plugin path (v2.3.0+)** — When mybrain is installed as a Claude CoWork plugin, the `.mcp.json` bundled with the plugin auto-registers the MCP server using credentials stored in plugin settings (keychain). No `claude mcp add` needed. The server starts with zero tools until the user configures `database_url` in the plugin settings. This is the recommended path for personal use across multiple projects.
+
+**CLI per-project path** — The MCP server is registered with `claude mcp add` using the default local scope — it lives in this user's Claude config for this project only. This is the correct path when you want **per-project brain isolation** (each repo has its own `BRAIN_SCOPE` and sees only its own thoughts). It is **never** registered with `--scope user` (leaks to every project, causes port races and mis-attributed thoughts) and **never** with `--scope project` (ships registration to teammates via `.mcp.json`). Step 0 below detects any pre-existing non-local registration and offers to remove it.
 
 The only user-facing choice during setup is **where the brain's database lives**. Four backends are supported:
 
@@ -22,15 +24,43 @@ The schema ships with a `{{EMBED_DIM}}` placeholder that is substituted at scaff
 
 Existing installs are never auto-migrated. On startup the MCP server reads the actual `embedding` column dimension from `information_schema` and logs it (e.g. `embedding dim: 1536 (detected)`). The log line is informational — pgvector itself raises a clear error on dimension mismatch at insert time.
 
-## Step 0: Pre-flight — Remove Deprecated Registrations
+## Step 0: Pre-flight — Determine Install Path and Remove Deprecated Registrations
 
-**Run this before every install, even on a fresh machine.** MyBrain previously had three non-local registration paths, all of which are now deprecated:
+**Run this before every install.** First determine which path the user wants, then check for conflicts.
 
-- `--scope user` makes one `mybrain` entry visible in *every* project on this machine. When two repos try to use it, one wins and the other silently mis-attributes thoughts (or fails to start, when their containers race for the same port).
-- `--scope project` writes the registration to `.mcp.json` and ships it to teammates / other clones via git, leaking machine-local URLs and ports.
-- **Plugin auto-registration (v2.2.0 and earlier)** — the plugin shipped a `.mcp.json` at its root, which Claude Code's plugin system auto-registered as **`plugin:mybrain:mybrain`** with a hard-coded `BRAIN_SCOPE: "personal"`. This was the primary cause of "thoughts attributed to the wrong project," because every project on the machine that had the plugin enabled inherited the same registration with the same scope. v2.2.1 removed the file from the plugin source. **Existing v2.2.0 installs may still have a cached copy** until the plugin is re-installed or upgraded.
+### 0.0 — Which Path?
 
-The new flow registers `mybrain` with **local** scope only — visible to this user, in this project, nowhere else. No plugin auto-registration.
+Ask the user: **"Are you setting up MyBrain as a Claude CoWork plugin (shared brain, configured once) or as a per-project CLI install (isolated brain per repo)?"**
+
+- **CoWork plugin path**: If the mybrain plugin is already enabled in Claude CoWork (visible in the Customize → Plugins menu), skip to Step 0.1 to check for CLI conflicts, then go straight to the CoWork configuration section at the end of this skill. No `claude mcp add` is needed — the plugin handles registration automatically.
+- **CLI per-project path**: Proceed through Steps 0.1–0.4 below, then continue to Step 1.
+
+### CoWork Plugin Path (stop here if plugin is already installed)
+
+If the user installed mybrain via Claude CoWork's "Customize → + → Add marketplace → personal plugin" flow:
+
+1. The plugin's `.mcp.json` automatically registers an MCP server using credentials from plugin settings.
+2. The server starts with **zero tools** until `database_url` is configured in the plugin settings.
+3. To activate: open **Claude CoWork → Customize → mybrain plugin → Settings** and fill in:
+   - **database_url** — PostgreSQL connection string (stored in system keychain)
+   - **embedding_api_key** — OpenRouter API key (stored in system keychain; leave blank for local Ollama)
+   - **brain_scope** — ltree namespace for your thoughts (default: `personal`)
+4. Restart Claude Code. The 8 brain tools will appear automatically.
+
+> This path is intentionally separate from the CLI per-project path. CoWork-registered tools appear as `mcp__mybrain__*`. Per-project CLI-registered tools also appear as `mcp__mybrain__*` (same namespace). **Do not run `claude mcp add` if you are using the CoWork plugin path** — the plugin registration and a manual registration will collide.
+
+**If the user wants per-project isolation** even after CoWork install: they should use the CLI path in each project repo and leave the CoWork plugin disabled for those projects.
+
+---
+
+### CLI Per-Project Path: Pre-flight Check
+
+**Run this before every CLI install.** MyBrain previously had non-local registration paths, all of which are now deprecated:
+
+- `--scope user` makes one `mybrain` entry visible in *every* project on this machine — causes port races and mis-attributed thoughts.
+- `--scope project` writes the registration to `.mcp.json` and ships it to teammates via git.
+
+The CLI flow registers `mybrain` with **local** scope only — visible to this user, in this project, nowhere else.
 
 ### 0.1 — Detect
 
@@ -40,32 +70,19 @@ Run:
 claude mcp list
 ```
 
-Inspect the output for any of the following:
+Inspect the output for any `mybrain` (or `mybrain-*`) entry whose scope is `user` or `project`.
 
-- An entry whose name is `mybrain` (or starts with `mybrain-`) **and** whose scope is shown as `user` or `project`.
-- An entry named `plugin:mybrain:mybrain` (or any `plugin:mybrain:*` variant). The `plugin:` prefix is the scope indicator — this entry was auto-registered by Claude Code's plugin loader from the `.mcp.json` shipped in v2.2.0 or earlier.
-
-If none of those are present, skip to Step 1.
+If none are present, skip to Step 1.
 
 ### 0.2 — Explain and Ask
 
-If a non-local registration exists, tell the user verbatim what you found and why it matters. Use whichever block matches:
-
-**For `--scope user` or `--scope project`:**
+If a non-local registration exists:
 
 > "I found a `mybrain` server registered with **{user|project}** scope. That scope is deprecated — it caused brains to fail to start when multiple repos shared the same registration, and thoughts to be attributed to the wrong project. The new install is always per-project (local scope), so this old registration needs to come out before we continue."
 
 Ask: **"Remove the {user|project}-scoped `mybrain` registration now? (yes / no)"**
 
-**For `plugin:mybrain:mybrain`:**
-
-> "I found a `plugin:mybrain:mybrain` entry. This was auto-registered by Claude Code's plugin loader from a `.mcp.json` shipped in mybrain v2.2.0 or earlier — it carries a hard-coded `BRAIN_SCOPE: \"personal\"` and applies to every project on the machine. v2.2.1 removed that file, but your plugin cache still has it. Until it's cleared, every project sees the same brain with the same scope, which is the bug we're fixing. The cleanest fix is to upgrade or re-install the plugin so the cache picks up the v2.2.1 source (no `.mcp.json`). Then we can register a clean per-project install."
-
-Ask: **"Upgrade the mybrain plugin to v2.2.1+ and clear the auto-registration now? (yes / no)"**
-
 ### 0.3 — Remove
-
-**For `--scope user` or `--scope project`:**
 
 ```bash
 # For user scope
@@ -77,28 +94,13 @@ claude mcp remove mybrain --scope project
 
 If a `mybrain-<name>` variant is registered, repeat with that exact name.
 
-**For `plugin:mybrain:mybrain`:**
-
-The `plugin:` registrations cannot be removed with `claude mcp remove` — they are managed by the plugin loader. Two ways to clear it:
-
-1. **Upgrade or re-install the plugin (recommended).** When the plugin cache picks up v2.2.1+, there is no `.mcp.json` to register, and the `plugin:mybrain:mybrain` entry disappears on the next Claude Code restart.
-
-   ```bash
-   claude plugin update mybrain@mybrain
-   # or, if update isn't available:
-   claude plugin uninstall mybrain
-   claude plugin install mybrain@mybrain
-   ```
-
-2. **Manual fallback (not recommended unless 1 fails).** Locate the cached plugin directory (typically `~/.claude/plugins/cache/mybrain.<hash>/` or similar — check `claude plugin path mybrain` if available) and delete the `.mcp.json` at its root. Restart Claude Code. This is fragile because the next plugin update can re-create it (it won't, on v2.2.1+, but other tooling might).
-
 After removal, **warn the user**:
 
-> "Any **other** project on this machine that was relying on the `{user|project|plugin:mybrain:mybrain}` registration will no longer see a brain when you open it. Each of those projects will need to re-run `/mybrain-setup` once to register its own per-project install. Existing brain data (databases, containers, volumes) is untouched — only the Claude Code registration was removed."
+> "Any **other** project on this machine that was relying on the `{user|project}` registration will no longer see a brain when you open it. Each of those projects will need to re-run `/mybrain-setup` once to register its own per-project install. Existing brain data (databases, containers, volumes) is untouched — only the Claude Code registration was removed."
 
 If **no**: stop the install. Tell the user:
 
-> "I can't safely register a per-project `mybrain` while a {user|project|plugin:mybrain:mybrain} registration still exists — they will collide. Re-run `/mybrain-setup` when you're ready to clear it."
+> "I can't safely register a per-project `mybrain` while a {user|project} registration still exists — they will collide. Re-run `/mybrain-setup` when you're ready to clear it."
 
 ### 0.4 — Continue
 

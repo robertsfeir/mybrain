@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "mybrain": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server.mjs"],
+      "env": {
+        "DATABASE_URL": "${user_config.database_url}",
+        "OPENROUTER_API_KEY": "${user_config.embedding_api_key}",
+        "BRAIN_SCOPE": "${user_config.brain_scope}"
+      }
+    }
+  }
+}

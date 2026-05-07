@@ -1,7 +1,10 @@
 {
   "name": "mybrain",
-  "version": "2.2.2",
+  "version": "2.3.0",
   "description": "Personal semantic thought storage and retrieval with vector embeddings and ltree scoping",
+  "homepage": "https://github.com/robertsfeir/mybrain",
+  "repository": "https://github.com/robertsfeir/mybrain",
+  "license": "MIT",
   "author": {
     "name": "Robert Sfeir",
     "email": "robert@sfeir.design"
@@ -10,5 +13,23 @@
   "skills": [
     "./skills/mybrain-setup",
     "./skills/mybrain-overview"
-  ]
+  ],
+  "userConfig": {
+    "database_url": {
+      "description": "PostgreSQL connection string — e.g. postgresql://user:pass@host:5432/mybrain?ssl=true&sslmode=no-verify",
+      "sensitive": true,
+      "required": false
+    },
+    "embedding_api_key": {
+      "description": "OpenRouter API key for embeddings (openrouter.ai/keys). Leave blank if using Ollama or another local provider.",
+      "sensitive": true,
+      "required": false
+    },
+    "brain_scope": {
+      "description": "ltree scope that namespaces your thoughts (e.g. personal, work, myproject). Defaults to 'personal'.",
+      "sensitive": false,
+      "required": false,
+      "default": "personal"
+    }
+  }
 }
