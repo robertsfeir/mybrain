@@ -34,21 +34,11 @@ process.env.NODE_TLS_REJECT_UNAUTHORIZED = process.env.NODE_TLS_REJECT_UNAUTHORI
 
 const config = resolveConfig();
 if (!config) {
-  // No DATABASE_URL — CoWork plugin installed but not yet configured via userConfig.
-  // Serve an empty MCP endpoint so the plugin is healthy; tools appear once the user
-  // sets database_url in the plugin settings and restarts Claude Code.
-  const _mode0 = process.env.MCP_TRANSPORT || process.argv[2] || "stdio";
-  if (_mode0 !== "http") {
-    await new McpServer({ name: "mybrain", version: "2.3.0" })
-      .connect(new StdioServerTransport());
-    // stdin keeps the event loop alive; zero tools are served until configured
-  } else {
-    console.error(
-      "mybrain: no DATABASE_URL configured. Set DATABASE_URL or create brain-config.json."
-    );
-    process.exit(0);
-  }
-} else {
+  console.error(
+    "No mybrain config found. Set DATABASE_URL or create .claude/brain-config.json. Exiting."
+  );
+  process.exit(0);
+}
 
 // Backward-compat: surface OPENROUTER_API_KEY from env into the config so
 // pre-ADR-0054 setups (only `openrouter_api_key` configured) keep working.
@@ -174,8 +164,6 @@ if (mode === "http") {
 } else {
   await startStdioMode(pool, cfg);
 }
-
-} // end else (config present)
 
 // =============================================================================
 // HTTP Mode
