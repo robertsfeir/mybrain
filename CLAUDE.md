@@ -85,6 +85,7 @@ MYBRAIN_WORKER_POLL_MS          — embed worker poll interval (default: 500)
 MYBRAIN_WORKER_BATCH            — embed worker batch size (default: 8)
 BRAIN_CONFIG_PROJECT            — explicit path to project brain-config.json
 BRAIN_CONFIG_USER               — explicit path to user brain-config.json
+BRAIN_SCOPE                     — default ltree scope for captures missing an explicit scope arg (comma-separated for multi; falls back to "personal")
 ATELIER_BRAIN_USER / MYBRAIN_USER  — override identity for `captured_by` field
 PORT                            — HTTP server port (default 8787)
 MCP_TRANSPORT                   — "stdio" or "http" (overrides argv[2])

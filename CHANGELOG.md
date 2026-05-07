@@ -5,6 +5,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.3.5] — 2026-05-07
+
+### Fixed
+- **Reversed the v2.3.2/v2.3.4 misdiagnosis of `userConfig` and `${user_config.*}`.** v2.3.2 stripped the `userConfig` block from `plugin.json` claiming "CoWork compatibility," and v2.3.4 doubled down by telling users to manually edit `${CLAUDE_PLUGIN_ROOT}/.mcp.json` post-install. Both were wrong. `userConfig` is part of the plugin manifest spec ([json.schemastore.org/claude-code-plugin-manifest.json](https://json.schemastore.org/claude-code-plugin-manifest.json)), `${user_config.<key>}` is documented substitution in `.mcp.json` ([code.claude.com/docs/en/plugins-reference](https://code.claude.com/docs/en/plugins-reference)), and CoWork supports both. The actual root cause of the original v2.3.1 failure was that each `userConfig` entry was missing the schema-required `type` and `title` fields, which made the manifest fail strict validation and silently fail to register the plugin's skills (anthropics/claude-code issue [#20415](https://github.com/anthropics/claude-code/issues/20415)). v2.3.5 restores `userConfig` with all three required fields per entry (`type`, `title`, `description`), restores `homepage`/`repository`/`license`/`keywords`, and reverts the manual `.mcp.json` editing instructions in B6/D8/N6/R4 back to the original "Customize → Configure options" flow.
+- **`BRAIN_SCOPE` env var is now actually wired through.** Before v2.3.5, the `${user_config.brain_scope}` → `BRAIN_SCOPE` mapping was a no-op — neither `server.mjs` nor `lib/` ever read that env var, so the userConfig setting did nothing. v2.3.5 wires it through `lib/tools.mjs:110`: when `agent_capture` receives no explicit `scope` argument, the server now reads `process.env.BRAIN_SCOPE`, comma-splits it for multi-scope, and falls back to `["personal"]` only when neither is set.
+
+### Changed
+- **Default scope renamed from `"default"` to `"personal"`.** `lib/tools.mjs:110` previously fell back to `scope=["default"]` when neither `BRAIN_SCOPE` nor an explicit per-call scope was supplied. "default" is meaningless as an ltree namespace label — `"personal"` matches the userConfig default and is what users actually want. Migration `005-rename-default-scope-to-personal.sql` re-tags any existing thoughts whose scope is exactly `["default"]` (single-element) to `["personal"]`. Multi-element scopes containing `"default"` are left alone (those carry intentional information). Migration is idempotent; runs once at startup.
+
+### Added
+- `BRAIN_SCOPE` env var documented in `CLAUDE.md`.
+
+---
+
 ## [2.3.4] — 2026-05-06
 
 ### Fixed

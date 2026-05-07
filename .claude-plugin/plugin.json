@@ -1,9 +1,38 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "mybrain",
-  "version": "2.3.4",
+  "version": "2.3.5",
   "description": "Personal semantic thought storage and retrieval with vector embeddings and ltree scoping",
   "author": {
     "name": "Robert Sfeir",
     "email": "robert@sfeir.design"
+  },
+  "homepage": "https://github.com/robertsfeir/mybrain",
+  "repository": "https://github.com/robertsfeir/mybrain",
+  "license": "Apache-2.0",
+  "keywords": ["knowledge-base", "memory", "semantic-search", "mcp", "pgvector", "postgresql"],
+  "userConfig": {
+    "database_url": {
+      "type": "string",
+      "title": "PostgreSQL connection URL",
+      "description": "postgres://user:pass@host:5432/dbname — must have pgvector + ltree extensions",
+      "sensitive": true,
+      "required": true
+    },
+    "embedding_api_key": {
+      "type": "string",
+      "title": "OpenRouter API key",
+      "description": "OpenRouter key for embeddings (https://openrouter.ai/keys). Leave blank if using local Ollama.",
+      "sensitive": true,
+      "required": false
+    },
+    "brain_scope": {
+      "type": "string",
+      "title": "Default brain scope",
+      "description": "ltree namespace that tags thoughts captured without an explicit scope (e.g. 'personal', 'work.research'). Comma-separate for multiple scopes.",
+      "sensitive": false,
+      "required": false,
+      "default": "personal"
+    }
   }
 }

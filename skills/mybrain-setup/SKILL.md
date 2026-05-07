@@ -431,25 +431,12 @@ cd .mybrain/<name> && docker compose up -d
 cd .mybrain/<name> && docker compose --profile ollama up -d
 ```
 
-**If CoWork plugin path:** Write the collected values directly into `${CLAUDE_PLUGIN_ROOT}/.mcp.json`:
+**If CoWork plugin path:** Open Claude (Customize → mybrain → Configure options) and fill in:
+- `database_url` — `postgresql://mybrain:mybrain@localhost:<pg-port>/mybrain`
+- `embedding_api_key` — your OpenRouter key (leave blank if using Ollama)
+- `brain_scope` — your ltree scope (default: `personal`)
 
-```json
-{
-  "mcpServers": {
-    "mybrain": {
-      "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/server.mjs"],
-      "env": {
-        "DATABASE_URL": "postgresql://mybrain:mybrain@localhost:<pg-port>/mybrain",
-        "OPENROUTER_API_KEY": "<openrouter-key-or-blank>",
-        "BRAIN_SCOPE": "<scope>"
-      }
-    }
-  }
-}
-```
-
-Tell the user to restart CoWork for the changes to take effect.
+Sensitive values are stored in the system keychain. Restart Claude for the changes to take effect.
 
 **If CLI per-project path:** Register with local scope:
 ```bash
@@ -529,25 +516,12 @@ Ask: **"Enable async memory storage? `capture_thought` returns instantly and emb
 
 ### N6: Register the MCP Server
 
-**If CoWork plugin path:** Write the collected values directly into `${CLAUDE_PLUGIN_ROOT}/.mcp.json`:
+**If CoWork plugin path:** Open Claude (Customize → mybrain → Configure options) and fill in:
+- `database_url` — the DATABASE_URL constructed in N4 (e.g. `postgresql://user@localhost:5432/mybrain`)
+- `embedding_api_key` — leave blank (Ollama needs no key)
+- `brain_scope` — the scope chosen in N3 (default: `personal`)
 
-```json
-{
-  "mcpServers": {
-    "mybrain": {
-      "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/server.mjs"],
-      "env": {
-        "DATABASE_URL": "<database-url-from-N4>",
-        "OPENROUTER_API_KEY": "",
-        "BRAIN_SCOPE": "<scope-from-N3>"
-      }
-    }
-  }
-}
-```
-
-Tell the user to restart CoWork for the changes to take effect.
+Sensitive values are stored in the system keychain. CoWork passes these as env vars when it starts `server.mjs`. Restart Claude for the changes to take effect.
 
 **If CLI per-project path:** Both register commands below use **local scope** (the default for `claude mcp add`). Do **not** pass `--scope user` or `--scope project`.
 
@@ -633,25 +607,12 @@ If yes, add `-e MYBRAIN_ASYNC_STORAGE=true` to the `claude mcp add` command in R
 
 ### R4: Register MCP Server
 
-**If CoWork plugin path:** Write the collected values directly into `${CLAUDE_PLUGIN_ROOT}/.mcp.json`:
+**If CoWork plugin path:** Open Claude (Customize → mybrain → Configure options) and fill in:
+- `database_url` — the DATABASE_URL constructed in R2 (e.g. `postgresql://user:pass@host:5432/db?ssl=true&sslmode=no-verify`)
+- `embedding_api_key` — your OpenRouter API key
+- `brain_scope` — the scope chosen in R1 (default: `personal`)
 
-```json
-{
-  "mcpServers": {
-    "mybrain": {
-      "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/server.mjs"],
-      "env": {
-        "DATABASE_URL": "<database-url-from-R2>",
-        "OPENROUTER_API_KEY": "<openrouter-key-from-R1>",
-        "BRAIN_SCOPE": "<scope-from-R1>"
-      }
-    }
-  }
-}
-```
-
-Tell the user to restart CoWork for the changes to take effect.
+Sensitive values are stored in the system keychain. CoWork passes these as env vars when it starts `server.mjs`. Restart Claude for the changes to take effect.
 
 **If CLI per-project path:** Register with **local scope** — the default for `claude mcp add`. Do **not** pass `--scope user` or `--scope project`. The shared remote DB is namespaced per-repo by `BRAIN_SCOPE`, not by MCP scope.
 
