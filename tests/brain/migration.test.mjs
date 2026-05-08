@@ -94,6 +94,28 @@ CREATE TABLE thoughts (
   trigger_event TEXT,
   created_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- v1 match_thoughts_scored: same parameter list as the merged shape, but
+-- RETURNS TABLE WITHOUT captured_by. Reproduces Frank's 2026-05-07 .mcpb
+-- failure mode where migration 002 hit Postgres 42P13 (cannot change
+-- return type) trying CREATE OR REPLACE against the v1 signature.
+CREATE FUNCTION match_thoughts_scored(
+  query_embedding vector(3),
+  similarity_threshold FLOAT DEFAULT 0.2,
+  max_results INTEGER DEFAULT 10,
+  metadata_filter JSONB DEFAULT '{}',
+  scope_filter ltree DEFAULT NULL,
+  include_invalidated BOOLEAN DEFAULT false
+)
+RETURNS TABLE (
+  id UUID,
+  content TEXT,
+  similarity FLOAT
+) AS $$
+BEGIN
+  RETURN QUERY SELECT t.id, t.content, 0.0::FLOAT FROM thoughts t LIMIT 0;
+END;
+$$ LANGUAGE plpgsql;
 `;
 
 // =============================================================================
@@ -242,6 +264,28 @@ async function runSuite() {
       WHERE table_schema = $1 AND table_name = 'thought_relations'
     `, [TEST_SCHEMA]);
     assert.equal(rows.length, 1, 'thought_relations must exist after migration');
+  });
+
+  // ---- (b2) migration 002 rebuilds match_thoughts_scored with captured_by ----
+  // Reproduces Frank's 2026-05-07 .mcpb failure: V1_BASELINE_SQL above
+  // creates a v1-shape match_thoughts_scored (RETURNS TABLE without
+  // captured_by). Migration 002 must DROP and recreate, not try
+  // CREATE OR REPLACE -- otherwise Postgres throws 42P13. Asserting on
+  // the post-migration RETURNS shape both proves the fix and is the
+  // regression guard.
+  await test('migration 002 rebuilds match_thoughts_scored with captured_by column', async () => {
+    const { rows } = await pool.query(`
+      SELECT pg_get_function_result(p.oid) AS result_def
+      FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = $1 AND p.proname = 'match_thoughts_scored'
+    `, [TEST_SCHEMA]);
+    assert.equal(rows.length, 1, 'match_thoughts_scored must exist after migrations');
+    const resultDef = rows[0].result_def;
+    assert.ok(
+      /captured_by/.test(resultDef),
+      `RETURNS TABLE must include captured_by after migration 002, got: ${resultDef}`
+    );
   });
 
   // ---- (c) calling runMigrations a second time is a no-op (idempotent) ----

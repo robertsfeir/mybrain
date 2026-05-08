@@ -5,18 +5,30 @@
 -- `t.captured_by` in the result set. v1 databases that ran migration
 -- 001 retain the v1 version of this function (without captured_by) by
 -- design (see migration 001 header). Wave 4 of ADR-0001 (tools.mjs)
--- expects captured_by in agent_search results, so this migration uses
--- CREATE OR REPLACE FUNCTION to bring migrated DBs to the same shape
--- as fresh installs from templates/schema.sql.
+-- expects captured_by in agent_search results, so this migration brings
+-- migrated DBs to the same shape as fresh installs from
+-- templates/schema.sql.
 --
--- Idempotent: CREATE OR REPLACE may run repeatedly; the function body
--- is identical to templates/schema.sql, so re-running on an already-
--- migrated DB is a no-op.
+-- DROP-then-CREATE (not CREATE OR REPLACE): Postgres rejects
+-- CREATE OR REPLACE FUNCTION when the new RETURNS TABLE differs from the
+-- existing one (error 42P13 cannot change return type of existing
+-- function). Adding the captured_by column to the result set is exactly
+-- such a change for any v1 DB. The DROP IF EXISTS … CASCADE clears the
+-- v1 function shape; CREATE FUNCTION below installs the merged shape.
+--
+-- Re-runnable: IF EXISTS makes the DROP a no-op when the function is
+-- absent; on a fresh install the merged baseline (templates/schema.sql)
+-- already created the function, so this migration drops + recreates an
+-- identical body. CASCADE is safe — no schema-level objects depend on
+-- this function (callers reach it via runtime SQL strings, not as a
+-- declared dependency).
 --
 -- The {{EMBED_DIM}} placeholder is substituted at apply time by the
 -- same mechanism that applies templates/schema.sql (sed in start.sh).
 
-CREATE OR REPLACE FUNCTION match_thoughts_scored(
+DROP FUNCTION IF EXISTS match_thoughts_scored(vector, FLOAT, INTEGER, JSONB, ltree, BOOLEAN) CASCADE;
+
+CREATE FUNCTION match_thoughts_scored(
   query_embedding vector({{EMBED_DIM}}),
   similarity_threshold FLOAT DEFAULT 0.2,
   max_results INTEGER DEFAULT 10,

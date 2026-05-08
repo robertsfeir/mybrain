@@ -5,6 +5,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.2.7] — 2026-05-07
+
+### Fixed
+- **Migration 002 now succeeds against existing v1 databases.** `migrations/002-match-thoughts-scored-captured-by.sql` used `CREATE OR REPLACE FUNCTION match_thoughts_scored(...)` to add `captured_by` to the `RETURNS TABLE` clause. Postgres rejects this with `42P13 cannot change return type of existing function` whenever the v1 shape (without `captured_by`) is already present — which is the entire point of a v1→merged upgrade. The migration now `DROP FUNCTION IF EXISTS … CASCADE;` first, then `CREATE FUNCTION`. Re-runnable on already-migrated DBs because `IF EXISTS` makes the drop a no-op when no v1 function exists. (`migrations/002-match-thoughts-scored-captured-by.sql:19`)
+- **Hostile-cwd config no longer shadows the user's real config in `.mcpb` installs.** Claude Desktop launches `.mcpb` extensions with `cwd` set to the extension folder. Any leftover `.claude/brain-config.json` in `~/Library/Application Support/Claude/Claude Extensions/local.mcpb.<id>/` would silently win over `~/.claude/brain-config.json` in the resolver chain — a partial config (no API key) on that path killed the server at `server.mjs:78` with no diagnostic. `lib/config.mjs:resolveConfig` now skips the cwd candidate when `cwd` matches `/Claude Extensions/` (or the Windows form), forcing fall-through to `BRAIN_CONFIG_USER` / `~/.claude/brain-config.json`. The `_source` field now records `personal-home-extension-cwd-skipped` when the skip fires, so the Settings UI / REST `/api/config` shows why home was preferred. (`lib/config.mjs:122`)
+- **Startup failures no longer disappear into the void.** Three early-exit sites in `server.mjs` (no config, anthropic embedding family, missing API keys) and the migration / probe chain previously emitted only `console.error` — which Claude Desktop's `.mcpb` runtime swallows. Worse, a top-level await rejection during migrations propagated to the `unhandledRejection` handler in `lib/crash-guards.mjs:76` which logs-and-survives, leaving the SDK never reaching `mcpServer.connect()` and the host showing only "Server transport closed unexpectedly". The migration / probe chain is now wrapped in `try/catch` that exits 1 on failure (so survival semantics still apply post-startup, but startup failures are fatal as they should be). All four exit paths now write a timestamped block to `~/.mybrain/startup.log` with the reason, stack, config source, Node version, and cwd before exiting, and stderr points at the log path. (`lib/startup-log.mjs`, `server.mjs:36`, `server.mjs:131`)
+
+### Added
+- **`lib/startup-log.mjs`** — best-effort timestamped failure logger (`writeStartupFailure`, `getStartupLogPath`). Creates `~/.mybrain/` if missing, appends across calls, never throws on fs errors.
+- **`tests/brain/config-resolution.test.mjs`** — three no-DB tests covering the cwd-skip in extension folders, normal cwd resolution, and home-only resolution. Exercises the `_source` field accuracy.
+- **`tests/brain/startup-log.test.mjs`** — four no-DB tests covering log path shape, log creation, append-not-overwrite semantics, and tolerance of weird input (undefined, null, empty, multi-line, non-string extras).
+- **`tests/brain/migration.test.mjs` reproduction case for migration 002.** `V1_BASELINE_SQL` now creates a v1-shape `match_thoughts_scored` (RETURNS TABLE without `captured_by`), reproducing Frank's 2026-05-07 starting state. New `pg_get_function_result` assertion guards against the regression.
+
+### Notes
+- These three fixes were surfaced together by Frank's 2026-05-07 `.mcpb` install, which spent hours in zombie state because all three failures stacked invisibly. The startup-log change (#3) is the highest-leverage of the three: it would have collapsed that debugging session to "read one line of `~/.mybrain/startup.log`".
+
+---
+
 ## [2.2.6] — 2026-05-07
 
 ### Fixed

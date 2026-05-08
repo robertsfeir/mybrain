@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "mybrain",
   "display_name": "MyBrain",
-  "version": "2.2.6",
+  "version": "2.2.7",
   "description": "Personal semantic thought storage and retrieval with vector embeddings and ltree scoping",
   "long_description": "MyBrain is a personal knowledge base with semantic search. It stores thoughts in PostgreSQL with vector embeddings (pgvector + ltree), making everything searchable by meaning rather than keyword. Runs as a local stdio MCP server. Supports OpenRouter (cloud) or Ollama (local) for embeddings.",
   "author": {

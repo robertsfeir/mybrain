@@ -1,6 +1,6 @@
 {
   "name": "mybrain",
-  "version": "2.2.6",
+  "version": "2.2.7",
   "description": "Personal semantic thought storage and retrieval with vector embeddings and ltree scoping",
   "author": {
     "name": "Robert Sfeir",

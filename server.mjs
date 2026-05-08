@@ -24,6 +24,7 @@ import { createRestHandler } from "./lib/rest-api.mjs";
 import { handleStaticFile } from "./lib/static.mjs";
 import { startConsolidationTimer, stopConsolidationTimer } from "./lib/consolidation.mjs";
 import { startTTLTimer, stopTTLTimer } from "./lib/ttl.mjs";
+import { writeStartupFailure, getStartupLogPath } from "./lib/startup-log.mjs";
 
 // Guarantee TLS relaxation reaches this process regardless of how it was launched.
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = process.env.NODE_TLS_REJECT_UNAUTHORIZED || "0";
@@ -34,9 +35,11 @@ process.env.NODE_TLS_REJECT_UNAUTHORIZED = process.env.NODE_TLS_REJECT_UNAUTHORI
 
 const config = resolveConfig();
 if (!config) {
-  console.error(
-    "No mybrain config found. Set DATABASE_URL or create .claude/brain-config.json. Exiting."
-  );
+  const msg =
+    "No mybrain config found. Set DATABASE_URL or create .claude/brain-config.json. Exiting.";
+  writeStartupFailure(msg);
+  console.error(msg);
+  console.error(`See ${getStartupLogPath()} for the full failure record.`);
   process.exit(0);
 }
 
@@ -61,29 +64,35 @@ const embedProviderConfig = buildProviderConfig(config, "embed");
 const chatProviderConfig = buildProviderConfig(config, "chat");
 
 if (embedProviderConfig.family === "anthropic") {
-  console.error(
+  const msg =
     "Configuration error: embedding_provider cannot be \"anthropic\" -- " +
     "Anthropic ships no embeddings API. Use openrouter, openai, github-models, " +
-    "or local for embedding_provider."
-  );
+    "or local for embedding_provider.";
+  writeStartupFailure(msg, { config_source: config._source });
+  console.error(msg);
+  console.error(`See ${getStartupLogPath()} for the full failure record.`);
   process.exit(1);
 }
 
 if (embedProviderConfig.family !== "local" && !embedProviderConfig.apiKey) {
-  console.error(
+  const msg =
     `Missing API key for embedding provider "${embedProviderConfig.providerName}". ` +
     "mybrain cannot generate embeddings. Set the appropriate API key in brain-config.json " +
-    "or environment, or switch embedding_provider to \"local\"."
-  );
+    "or environment, or switch embedding_provider to \"local\".";
+  writeStartupFailure(msg, { config_source: config._source });
+  console.error(msg);
+  console.error(`See ${getStartupLogPath()} for the full failure record.`);
   process.exit(1);
 }
 
 if (chatProviderConfig.family !== "local" && !chatProviderConfig.apiKey) {
-  console.error(
+  const msg =
     `Missing API key for chat provider "${chatProviderConfig.providerName}". ` +
     "mybrain cannot run conflict classification or consolidation. Set the appropriate " +
-    "API key in brain-config.json or environment, or switch chat_provider to \"local\"."
-  );
+    "API key in brain-config.json or environment, or switch chat_provider to \"local\".";
+  writeStartupFailure(msg, { config_source: config._source });
+  console.error(msg);
+  console.error(`See ${getStartupLogPath()} for the full failure record.`);
   process.exit(1);
 }
 
@@ -121,21 +130,44 @@ installCrashGuards({
 // =============================================================================
 // Schema Init + Embed Probe + Background Workers
 // =============================================================================
+//
+// Wrapped in try/catch so a failure in runMigrations or probeEmbeddingDim
+// produces a non-zero exit instead of zombie state. Without this guard,
+// a top-level await rejection here propagates to the unhandledRejection
+// handler installed by installCrashGuards (lib/crash-guards.mjs:76),
+// which logs-and-survives -- correct steady-state behavior, but during
+// startup it leaves the SDK never reaching mcpServer.connect() and the
+// host's "Server transport closed unexpectedly" hides the real cause.
+// Frank's 2026-05-07 .mcpb install spent hours in exactly this state.
+//
+// startTTLTimer and startConsolidationTimer keep their own .catch
+// fallbacks: they are intentionally non-fatal -- core MCP can serve
+// captures and searches without them.
 
-await runMigrations(pool);
-await probeEmbeddingDim(pool);
-await startTTLTimer(pool).catch((err) =>
-  console.error("TTL timer start failed:", err.message)
-);
-await startConsolidationTimer(pool, {
-  embedConfig: embedProviderConfig,
-  chatConfig: chatProviderConfig,
-}).catch((err) =>
-  console.error("Consolidation timer start failed:", err.message)
-);
+try {
+  await runMigrations(pool);
+  await probeEmbeddingDim(pool);
+  await startTTLTimer(pool).catch((err) =>
+    console.error("TTL timer start failed:", err.message)
+  );
+  await startConsolidationTimer(pool, {
+    embedConfig: embedProviderConfig,
+    chatConfig: chatProviderConfig,
+  }).catch((err) =>
+    console.error("Consolidation timer start failed:", err.message)
+  );
 
-if (ASYNC_STORAGE) {
-  embedWorkerHandle = startEmbedWorker(pool, embedProviderConfig);
+  if (ASYNC_STORAGE) {
+    embedWorkerHandle = startEmbedWorker(pool, embedProviderConfig);
+  }
+} catch (err) {
+  const detail = `${err && err.message ? err.message : String(err)}\n${err && err.stack ? err.stack : ""}`;
+  writeStartupFailure(`startup phase failed: ${detail}`, {
+    config_source: config._source,
+  });
+  console.error("mybrain startup failed:", err && err.message ? err.message : err);
+  console.error(`See ${getStartupLogPath()} for the full failure record.`);
+  process.exit(1);
 }
 
 // =============================================================================
