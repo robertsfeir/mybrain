@@ -4,3 +4,5 @@ node_modules/
 .claude/
 docs/
 *.mcpb
+.DS_Store
+working-memory-*

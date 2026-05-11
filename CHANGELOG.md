@@ -5,6 +5,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.4.0] — 2026-05-11
+
+### Added
+- **`agent_capture` accepts an optional `relations` array (mybrain ADR-0001).** Each entry — `{ target_id, relation_type, context? }` — creates an inline edge from the new thought to an existing thought in the same transaction. Collapses the dominant "capture + relate" pattern from two MCP round-trips (and two model planning passes) to one. The standalone `atelier_relation` tool is unchanged and still useful when both source and target already exist. (`lib/tools.mjs`, `guides/adrs/0001-inline-relations.md`)
+- **`tests/brain/inline-relations.test.mjs`** — eight integration tests covering: no-relations baseline (existing behavior unchanged), one inline relation, multiple inline relations, inline `supersedes` marking the target row `superseded`, the ambiguous `supersedes_id` + inline `supersedes` rejection, the unknown-`target_id` rollback path, and the duplicate-`(target_id, relation_type)` API-edge rejection. Mirrors the schema-isolation pattern in `protocol-tools.test.mjs` (dedicated `mybrain_test_inline_relations` schema with cascade teardown).
+
+### Changed
+- **`agent_capture` tool description** now mentions the `relations` field and points callers at it as the preferred path. The legacy `supersedes_id` parameter description also flags it as legacy in favor of the inline `relations` form. (`lib/tools.mjs`)
+- **`handleMerge` now surfaces a warning when `relations[]` is dropped on the merge path.** When conflict detection auto-merges a new `decision`/`preference` capture into an existing one (similarity > 0.9), no new thought row is inserted, so any inline `relations[]` cannot be applied. The merge response now carries `warning: "agent_capture relations[] ignored: capture was merged into existing thought <uuid>…"` so callers can fall back to a direct `atelier_relation` call against the merge-result `thought_id`. (`lib/tools.mjs`)
+
+### Validation rules
+
+The new field is rejected at the API boundary (no DB work) in two cases:
+- Both `supersedes_id` and a `relations[]` entry with `relation_type='supersedes'` are present → ambiguous; the two could name different `target_id`s. The error message names both fields and points at `relations[]`.
+- Two entries in `relations[]` share the same `(target_id, relation_type)` pair → the DB `UNIQUE` constraint would coalesce these via `ON CONFLICT`, but failing fast is more honest than silent collapse.
+
+For each inline relation, the handler also: pre-checks every `target_id` exists in one round-trip (so a typo produces a readable error rather than a raw FK violation message), runs `checkSupersedeCycle` for any `supersedes` entry, and inserts via `ON CONFLICT (source_id, target_id, relation_type) DO UPDATE SET context = EXCLUDED.context` to match `atelier_relation` idempotency. The whole capture is one transaction — any failure rolls back the new thought too.
+
+### Backwards compatibility
+
+`relations` is optional with default `[]`. Every pre-existing `agent_capture` call signature (no `relations` field) executes the identical code path with the identical response shape. `supersedes_id` continues to work standalone — no behavior change for any existing caller.
+
+### Notes
+- v2.3.x was yanked in v2.2.3 (commit `202a885`); this release jumps to v2.4.0 for a clean break.
+
+---
+
 ## [2.2.7] — 2026-05-07
 
 ### Fixed

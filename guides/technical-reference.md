@@ -204,6 +204,7 @@ The full flow is in `lib/tools.mjs` (`handleAgentCapture` and helpers).
 | `alternatives_rejected` | no | `[{ alternative, reason }]` |
 | `evidence` | no | `[{ file, line }]` |
 | `confidence` | no | 0–1 float; low values flag for retro review |
+| `relations` | no | Array of `{ target_id, relation_type, context? }` to create inline edges to existing thoughts. See [Inline Relations](#inline-relations-mybrain-adr-0001) below. |
 
 ### Flow
 
@@ -221,8 +222,20 @@ The full flow is in `lib/tools.mjs` (`handleAgentCapture` and helpers).
    - If conflict result was `supersede` → same as above with the candidate id.
    - If conflict result was `conflict` → mark candidate `conflicted`; insert `contradicts` relation new→candidate.
    - If conflict result has a `relatedId` (COMPLEMENT/NOVEL classification) → tracked in `related_ids` (no relation row inserted automatically).
+   - For each entry in `relations[]` (mybrain ADR-0001): one round-trip pre-checks every `target_id` exists; for `relation_type='supersedes'`, the `checkSupersedeCycle` recursive CTE runs (depth 20); insert with `ON CONFLICT (source_id, target_id, relation_type) DO UPDATE SET context = EXCLUDED.context`; for `supersedes`, the target is also marked `superseded` + `invalidated_at = now()`. Every target id lands in `related_ids`.
 9. **`COMMIT`**.
 10. **Return** `{ thought_id, created_at, captured_by, conflict_flag, related_ids, warning? }`.
+
+### Inline Relations (mybrain ADR-0001)
+
+`relations[]` is the preferred way to link a new thought to existing thoughts. Each entry is `{ target_id (uuid, required), relation_type (enum, required), context (string, optional) }`. The whole capture is one transaction — if any inline relation insert fails, the new thought is rolled back too.
+
+Two boundary conditions are rejected at the API edge before any DB work:
+
+- Passing both `supersedes_id` *and* a `relations[]` entry with `relation_type='supersedes'` → `Error: agent_capture received both 'supersedes_id' and a 'supersedes' entry in 'relations'…`. The two fields could name different `target_id`s, so silent precedence is unsafe.
+- Two entries in `relations[]` with the same `(target_id, relation_type)` → `Error: duplicate entry in 'relations'…`. The DB `UNIQUE` constraint would coalesce these via `ON CONFLICT`, but failing fast is more honest.
+
+In the conflict-detection **merge** path (similarity > 0.9 against an existing `decision`/`preference`), the new thought is *not* inserted — the existing row is updated in place. If `relations[]` was passed, the response carries `warning: "agent_capture relations[] ignored: capture was merged into existing thought <uuid>…"`. Call `atelier_relation` against the returned `thought_id` if you need explicit links on the merged row.
 
 ### Error handling
 
@@ -544,7 +557,7 @@ This is the only built-in path to permanent deletion. Active, superseded, invali
 | Status | How a thought enters this status | Searchable by default? | Hard-deletable via REST? |
 |---|---|---|---|
 | `active` | Insert | ✅ | ❌ |
-| `superseded` | Auto from conflict-detection `supersede`, or manual via `atelier_relation` with `relation_type = 'supersedes'`, or `supersedes_id` on `agent_capture` | ❌ (visible with `include_invalidated`) | ❌ |
+| `superseded` | Auto from conflict-detection `supersede`, or manual via `atelier_relation` with `relation_type = 'supersedes'`, or `supersedes_id` on `agent_capture`, or a `relations[]` entry with `relation_type='supersedes'` on `agent_capture` (mybrain ADR-0001) | ❌ (visible with `include_invalidated`) | ❌ |
 | `invalidated` | Manual UPDATE only — no built-in path | ❌ | ❌ |
 | `expired` | TTL pass | ❌ | ✅ via `/api/purge-expired` |
 | `conflicted` | Cross-scope CONTRADICTION classification | ❌ | ❌ |
@@ -718,7 +731,7 @@ All eight tools are registered by `registerTools` in `lib/tools.mjs`.
 Store a thought. See [Ingestion Pipeline](#ingestion-pipeline-agent_capture) for the full flow.
 
 **Required:** `content`, `thought_type`, `source_agent`, `source_phase`, `importance`.
-**Optional:** `trigger_event`, `supersedes_id`, `scope`, `metadata`, `decided_by`, `alternatives_rejected`, `evidence`, `confidence`.
+**Optional:** `trigger_event`, `supersedes_id`, `scope`, `metadata`, `decided_by`, `alternatives_rejected`, `evidence`, `confidence`, `relations`.
 
 **Returns:**
 ```json

@@ -59,7 +59,7 @@ Eight MCP tools Claude can call on your behalf (the 8-tool atelier-brain protoco
 
 | Tool | What it does |
 |---|---|
-| `agent_capture` | Save a thought with schema-enforced metadata; runs dedup + conflict detection on `decision`/`preference` types |
+| `agent_capture` | Save a thought with schema-enforced metadata; runs dedup + conflict detection on `decision`/`preference` types. Optional `relations[]` parameter creates inline edges to existing thoughts in the same transaction — collapses the common "capture + relate" pattern to one MCP call |
 | `agent_search` | Semantic search with three-axis scoring (relevance + importance + recency); refreshes recency on hits |
 | `atelier_browse` | Paginated listing filtered by status, type, agent, scope, or human |
 | `atelier_stats` | Brain health + counts by type / status / agent / human |
